@@ -26,6 +26,8 @@ extern STClass *BooleanClass;
 extern STClass *TrueClass;
 extern STClass *FalseClass;
 extern STClass *SmallIntegerClass;
+extern STClass *StringClass;
+extern STClass *SymbolClass;
 
 extern oop nilObject;
 extern oop trueObject;

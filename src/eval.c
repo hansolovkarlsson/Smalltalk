@@ -1,5 +1,8 @@
 #include "eval.h"
 #include "class.h"
+#include "environment.h"
+#include "stringobj.h"
+#include "symbol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +27,23 @@ oop eval(AstNode *node) {
             return trueObject;
         case AST_FALSE_LITERAL:
             return falseObject;
+        case AST_STRING_LITERAL:
+            return makeString(node->as.stringValue);
+        case AST_SYMBOL_LITERAL:
+            return internSymbol(node->as.symbolName);
+        case AST_VARIABLE_REF: {
+            oop value;
+            if (envLookup(node->as.variableName, &value)) {
+                return value;
+            }
+            fprintf(stderr, "error: undefined variable '%s'\n", node->as.variableName);
+            return nilObject;
+        }
+        case AST_ASSIGNMENT: {
+            oop value = eval(node->as.assignment.value);
+            envSet(node->as.assignment.name, value);
+            return value;
+        }
         case AST_UNARY_SEND: {
             oop receiver = eval(node->as.unarySend.receiver);
             return sendMessage(receiver, node->as.unarySend.selector, NULL, 0);
@@ -44,6 +64,23 @@ oop eval(AstNode *node) {
             }
             oop result = sendMessage(receiver, node->as.keywordSend.selector, args, argc);
             free(args);
+            return result;
+        }
+        case AST_CASCADE: {
+            oop receiver = eval(node->as.cascade.receiver);
+            oop result = receiver;
+            for (int i = 0; i < node->as.cascade.messageCount; i++) {
+                CascadeMessage *m = &node->as.cascade.messages[i];
+                oop *args = NULL;
+                if (m->argCount > 0) {
+                    args = malloc(sizeof(oop) * (size_t)m->argCount);
+                    for (int j = 0; j < m->argCount; j++) {
+                        args[j] = eval(m->args[j]);
+                    }
+                }
+                result = sendMessage(receiver, m->selector, args, m->argCount);
+                free(args);
+            }
             return result;
         }
     }

@@ -4,31 +4,20 @@
 #include "class.h"
 #include "eval.h"
 #include "parser.h"
+#include "stringobj.h"
+#include "symbol.h"
 
-static void printOop(oop o) {
-    if (oopIsSmallInteger(o)) {
-        printf("%ld\n", smallIntegerValue(o));
-        return;
-    }
-    if (o == nilObject) {
-        printf("nil\n");
-        return;
-    }
-    if (o == trueObject) {
-        printf("true\n");
-        return;
-    }
-    if (o == falseObject) {
-        printf("false\n");
-        return;
-    }
-    printf("a %s\n", classOf(o)->name);
+/* Object's default #printString primitive guarantees every class reaches
+ * one via the superclass chain, so this always gets back a real String. */
+static void printResult(oop result) {
+    oop str = sendMessage(result, intern("printString"), NULL, 0);
+    printf("%s\n", ((StringObject *)str)->bytes);
 }
 
 int main(void) {
     bootstrapClasses();
 
-    printf("Smalltalk REPL (milestone 1). Type an expression, or 'quit' to exit.\n");
+    printf("Smalltalk REPL (milestone 2). Type an expression, or 'quit' to exit.\n");
 
     char line[1024];
     while (1) {
@@ -57,7 +46,7 @@ int main(void) {
         }
 
         oop result = eval(ast);
-        printOop(result);
+        printResult(result);
     }
 
     return 0;

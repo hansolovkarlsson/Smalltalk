@@ -9,6 +9,8 @@ STClass *BooleanClass;
 STClass *TrueClass;
 STClass *FalseClass;
 STClass *SmallIntegerClass;
+STClass *StringClass;
+STClass *SymbolClass;
 
 oop nilObject;
 oop trueObject;
@@ -65,6 +67,12 @@ void bootstrapClasses(void) {
     TrueClass = newClass("True", BooleanClass);
     FalseClass = newClass("False", BooleanClass);
     SmallIntegerClass = newClass("SmallInteger", ObjectClass);
+    StringClass = newClass("String", ObjectClass);
+    /* Symbol is kept separate from String (not a subclass) since its heap
+     * layout differs -- it wraps an already-interned name rather than
+     * owning a byte buffer. Real Smalltalk makes Symbol a String subclass;
+     * that needs a shared indexable representation, which is future work. */
+    SymbolClass = newClass("Symbol", ObjectClass);
 
     nilObject = allocInstance(UndefinedObjectClass);
     trueObject = allocInstance(TrueClass);

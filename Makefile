@@ -1,7 +1,8 @@
 CC = cc
 CFLAGS = -std=c11 -Wall -Wextra -g -Isrc
 
-SRC = src/class.c src/symbol.c src/lexer.c src/parser.c src/eval.c src/primitives.c
+SRC = src/class.c src/symbol.c src/lexer.c src/parser.c src/eval.c src/primitives.c \
+      src/stringobj.c src/environment.c
 OBJ = $(SRC:.c=.o)
 
 all: smalltalk

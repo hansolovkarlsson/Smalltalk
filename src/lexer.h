@@ -6,6 +6,10 @@ typedef enum {
     TOK_IDENTIFIER,
     TOK_KEYWORD,   /* identifier immediately followed by ':', e.g. "at:" */
     TOK_BINARY,    /* one or more binary-selector characters, e.g. "<=" */
+    TOK_STRING,    /* 'quoted', with '' as an escaped literal quote */
+    TOK_SYMBOL,    /* #foo, #at:put:, or #+ */
+    TOK_ASSIGN,    /* := */
+    TOK_SEMICOLON, /* ; (cascade separator) */
     TOK_LPAREN,
     TOK_RPAREN,
     TOK_DOT,
@@ -16,7 +20,7 @@ typedef enum {
 typedef struct {
     TokenType type;
     long intValue;
-    char text[64];
+    char text[256];
 } Token;
 
 typedef struct {
