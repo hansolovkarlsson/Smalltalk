@@ -121,16 +121,7 @@ string literals.
 `parsePrimary()` (not stored in the variable environment); any other bare
 identifier parses as `AST_VARIABLE_REF` and is resolved at eval time.
 
-## Roadmap (not yet built)
+## Roadmap
 
-Milestones are meant to land in roughly this order; each is a deliberately
-separate step so the object model and message-send semantics get proven
-out before more moving parts (a compiler, a GC) are added on top:
-
-1. Class-definition syntax + user-defined Smalltalk methods (not just C
-   primitives) and instance variables.
-2. Block literals/closures, non-local return, control flow
-   (`ifTrue:ifFalse:`, `whileTrue:`) built from blocks.
-3. Garbage collection (mark-sweep).
-4. Bytecode compiler + bytecode dispatch loop, replacing the tree-walker —
-   this is when it becomes a "real" VM in the classic Smalltalk-80 sense.
+See `ROADMAP.md` for the milestone plan, current progress, and example
+REPL sessions to try for each completed milestone.
