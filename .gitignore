@@ -1,0 +1,4 @@
+smalltalk
+run_tests
+*.o
+*.dSYM/

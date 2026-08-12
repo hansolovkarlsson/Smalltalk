@@ -1,0 +1,31 @@
+#ifndef LEXER_H
+#define LEXER_H
+
+typedef enum {
+    TOK_INT,
+    TOK_IDENTIFIER,
+    TOK_KEYWORD,   /* identifier immediately followed by ':', e.g. "at:" */
+    TOK_BINARY,    /* one or more binary-selector characters, e.g. "<=" */
+    TOK_LPAREN,
+    TOK_RPAREN,
+    TOK_DOT,
+    TOK_EOF,
+    TOK_ERROR
+} TokenType;
+
+typedef struct {
+    TokenType type;
+    long intValue;
+    char text[64];
+} Token;
+
+typedef struct {
+    const char *src;
+    int pos;
+    int expectOperand; /* disambiguates leading '-' as negative literal vs binary selector */
+} Lexer;
+
+void lexerInit(Lexer *lx, const char *src);
+Token lexerNext(Lexer *lx);
+
+#endif
