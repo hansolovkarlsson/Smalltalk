@@ -4,8 +4,8 @@ Status: ✅ done · 🚧 next up · ⏳ planned
 
 Each milestone lands as its own commit and is a deliberately separate step,
 so the object model and message-send semantics get proven out before more
-moving parts (a compiler, a GC) are added on top. See `CLAUDE.md` for the
-internal architecture; this file tracks progress and how to try each
+moving parts (a compiler, a GC) are added on top. See `../CLAUDE.md` for
+the internal architecture; this file tracks progress and how to try each
 milestone yourself.
 
 ## How to test as you go
@@ -16,10 +16,10 @@ milestone yourself.
 - `make && ./smalltalk` — the REPL, for manual/interactive testing. Each
   milestone below lists example expressions you can paste in directly.
 - `quit` or `exit` (or Ctrl-D) leaves the REPL.
-- `make examples` — runs every file in `examples/` (also runnable one at a
-  time: `./smalltalk examples/point.st`) and fails if any of them errors.
-  Bigger, narrated demonstrations than the inline snippets below — see
-  `examples/README.md`.
+- `make examples` — runs every file in `../examples/` (also runnable one
+  at a time: `./smalltalk examples/point.st`) and fails if any of them
+  errors. Bigger, narrated demonstrations than the inline snippets below —
+  see `../examples/README.md`.
 
 ## Milestone 1 — Core object model, message dispatch, REPL ✅
 
@@ -97,7 +97,7 @@ Known gaps: no accessor auto-generation (write `x  ^x` by hand), no class-
 side (metaclass) methods, no real per-class metaclass (`Point class
 printString` is `'Class'` for every user class, not `'Point class'`), and
 cascading directly off a bare `super` receiver loses super-dispatch after
-the first message — see `CLAUDE.md` for the full list of deliberate
+the first message — see `../CLAUDE.md` for the full list of deliberate
 simplifications.
 
 **Try it:**
@@ -123,7 +123,8 @@ st> Dog new setName: 'Rex'; speak
 
 Fuller, runnable versions of both of the above (plus a third, `Counter`,
 showing instance-variable mutation and cascades together) live in
-`examples/point.st` and `examples/animals.st` — see `examples/README.md`.
+`../examples/point.st` and `../examples/animals.st` — see
+`../examples/README.md`.
 
 ## Milestone 4 — Blocks/closures, control flow 🚧
 

@@ -15,7 +15,7 @@ suite alongside `make test`):
 $ make examples
 ```
 
-There's no comment syntax yet (see `LANGUAGE.md`'s Known Limitations), so
+There's no comment syntax yet (see `../docs/LANGUAGE.md`'s Known Limitations), so
 these files are plain code with no inline narration — the explanations
 live here instead. Each is just a sequence of top-level expressions, same
 as typing them at the `st>` prompt one at a time; there's no multi-line
@@ -46,5 +46,5 @@ starts at `0` independently of `c`'s.
 Note that `new` never auto-sends `initialize` here (unlike modern
 Smalltalk dialects) — each example calls it explicitly, e.g. `Counter new
 initialize`. Forgetting to would leave `count` as `nil`, and `count + 1`
-would fail (see `LANGUAGE.md`'s Known Limitations: primitives don't
+would fail (see `../docs/LANGUAGE.md`'s Known Limitations: primitives don't
 type-check their arguments).

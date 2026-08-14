@@ -208,5 +208,8 @@ itself never consumes).
 
 ## Roadmap
 
-See `ROADMAP.md` for the milestone plan, current progress, and example
-REPL sessions to try for each completed milestone.
+See `docs/ROADMAP.md` for the milestone plan, current progress, and
+example REPL sessions to try for each completed milestone. Narrative
+documentation lives under `docs/` (`docs/ROADMAP.md`, `docs/LANGUAGE.md`);
+this file (`CLAUDE.md`) stays at the repo root since Claude Code only
+auto-loads it from there.

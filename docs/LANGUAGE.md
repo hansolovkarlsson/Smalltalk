@@ -1,9 +1,10 @@
 # Language Reference
 
 What the interpreter actually accepts and does right now — Milestone 3.
-This documents observable REPL behavior, not internals; see `CLAUDE.md` for
-how it's implemented and `ROADMAP.md` for what's coming next. Every example
-below was run against the built interpreter, not written from memory.
+This documents observable REPL behavior, not internals; see `../CLAUDE.md`
+for how it's implemented and `ROADMAP.md` for what's coming next. Every
+example below was run against the built interpreter, not written from
+memory.
 
 ## Running it
 
@@ -413,8 +414,9 @@ Deliberate scope boundaries for this milestone, not bugs — tracked in
 
 - `ROADMAP.md` — milestone plan and progress, with REPL examples per
   milestone.
-- `CLAUDE.md` — internal architecture: object representation, dispatch,
+- `../CLAUDE.md` — internal architecture: object representation, dispatch,
   parser structure, and notable bugs already fixed.
-- `examples/` — fuller, runnable programs (`./smalltalk examples/point.st`,
-  or `make examples` to check them all at once); narrated in
-  `examples/README.md` since the language has no comment syntax of its own.
+- `../examples/` — fuller, runnable programs (`./smalltalk
+  examples/point.st`, or `make examples` to check them all at once);
+  narrated in `../examples/README.md` since the language has no comment
+  syntax of its own.
