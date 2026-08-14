@@ -1,4 +1,5 @@
 #include "environment.h"
+#include "gc.h"
 
 #include <stdlib.h>
 
@@ -35,4 +36,10 @@ void envSet(const char *name, oop value) {
     bindings[count].name = name;
     bindings[count].value = value;
     count++;
+}
+
+void envMarkRoots(void) {
+    for (int i = 0; i < count; i++) {
+        gcMarkOop(bindings[i].value);
+    }
 }

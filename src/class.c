@@ -1,5 +1,6 @@
 #include "class.h"
 #include "environment.h"
+#include "gc.h"
 #include "symbol.h"
 
 #include <stdlib.h>
@@ -32,7 +33,7 @@ static STClass *allocClass(const char *name, STClass *superclass) {
  * at a real STClass before this is first called (it registers itself,
  * self-referentially: its own classOop.isa is ClassClass). */
 static void registerClass(STClass *cls) {
-    ClassObject *co = malloc(sizeof(ClassObject));
+    ClassObject *co = gcAlloc(GC_KIND_OOP, sizeof(ClassObject));
     co->isa = ClassClass;
     co->thisClass = cls;
     cls->classOop = (oop)co;
@@ -120,7 +121,7 @@ STClass *classOf(oop o) {
 }
 
 oop instantiate(STClass *cls) {
-    Object *obj = calloc(1, sizeof(Object) + sizeof(oop) * (size_t)cls->instanceVarCount);
+    Object *obj = gcAlloc(GC_KIND_OOP, sizeof(Object) + sizeof(oop) * (size_t)cls->instanceVarCount);
     obj->isa = cls;
     for (int i = 0; i < cls->instanceVarCount; i++) {
         obj->fields[i] = nilObject;

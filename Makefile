@@ -4,7 +4,7 @@ CFLAGS = -std=c11 -Wall -Wextra -g -Isrc
 BIN_DIR = bin
 
 SRC = src/class.c src/symbol.c src/lexer.c src/parser.c src/eval.c src/primitives.c \
-      src/stringobj.c src/environment.c
+      src/stringobj.c src/environment.c src/gc.c
 OBJ = $(SRC:.c=.o)
 
 all: $(BIN_DIR)/smalltalk

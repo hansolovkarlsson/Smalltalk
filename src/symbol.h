@@ -20,4 +20,9 @@ oop internSymbol(const char *name);
 
 const char *symbolName(oop symbol);
 
+/* Marks every interned Symbol as a GC root (gc.h). In practice this means
+ * a Symbol, once created, is never collected -- same as a real
+ * Smalltalk's SymbolTable, which is exactly what this table already is. */
+void symbolMarkRoots(void);
+
 #endif

@@ -1,6 +1,6 @@
 # Language Reference
 
-What the interpreter actually accepts and does right now — Milestone 4.
+What the interpreter actually accepts and does right now — Milestone 5.
 This documents observable REPL behavior, not internals; see `../CLAUDE.md`
 for how it's implemented and `ROADMAP.md` for what's coming next. Every
 example below was run against the built interpreter, not written from
@@ -606,6 +606,11 @@ Deliberate scope boundaries for this milestone, not bugs — tracked in
   parameters, are scoped to their own activation and its lexical chain
   (see [Blocks and control flow](#blocks-and-control-flow)) — genuine
   closures, not dynamic scoping.
+- Memory is garbage collected automatically as of this milestone (see
+  `../CLAUDE.md` for the mechanism) — there's no language-level way to
+  force, disable, or observe a collection (no `Smalltalk collectGarbage`
+  or similar), and no way to run cleanup code when an object is
+  reclaimed (no finalizers/`#finalize`).
 
 ## See also
 

@@ -1,5 +1,6 @@
 #include "symbol.h"
 #include "class.h"
+#include "gc.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -46,7 +47,7 @@ const char *intern(const char *name) {
 oop internSymbol(const char *name) {
     int idx = internIndex(name);
     if (!symbolOops[idx]) {
-        SymbolObject *sym = malloc(sizeof(SymbolObject));
+        SymbolObject *sym = gcAlloc(GC_KIND_OOP, sizeof(SymbolObject));
         sym->isa = SymbolClass;
         sym->name = table[idx];
         symbolOops[idx] = (oop)sym;
@@ -56,4 +57,10 @@ oop internSymbol(const char *name) {
 
 const char *symbolName(oop symbol) {
     return ((SymbolObject *)symbol)->name;
+}
+
+void symbolMarkRoots(void) {
+    for (int i = 0; i < count; i++) {
+        if (symbolOops[i]) gcMarkOop(symbolOops[i]);
+    }
 }

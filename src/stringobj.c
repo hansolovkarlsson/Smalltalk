@@ -1,11 +1,12 @@
 #include "stringobj.h"
 #include "class.h"
+#include "gc.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 oop makeStringN(const char *bytes, long length) {
-    StringObject *s = malloc(sizeof(StringObject) + (size_t)length + 1);
+    StringObject *s = gcAlloc(GC_KIND_OOP, sizeof(StringObject) + (size_t)length + 1);
     s->isa = StringClass;
     s->length = length;
     memcpy(s->bytes, bytes, (size_t)length);

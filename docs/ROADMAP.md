@@ -182,12 +182,64 @@ st> Math new fact: 10                  "3628800, matches 10 factorial"
 Fuller, runnable version of the above lives in `../examples/blocks.st` —
 see `../examples/README.md`.
 
-## Milestone 5 — Garbage collection ⏳
+## Milestone 5 — Garbage collection ✅
 
-A mark-sweep collector, replacing the current "`malloc` and never free."
-Needs a root set (the variable environment, the REPL's in-flight AST/eval
-stack) and a real object-header story now that three heap layouts exist
-(`Object`, `StringObject`, `SymbolObject`).
+A mark-sweep collector, replacing the "`malloc` and never free" policy
+every earlier milestone deliberately relied on. Needed a root set (the
+variable environment, the interned-symbol table, the in-progress method/
+block call chain) and a real object-header story now that five oop heap
+layouts exist (`Object`, `StringObject`, `SymbolObject`, `ClassObject`,
+`BlockObject`) plus one more heap-allocated-but-not-a-tagged-oop thing
+(`Activation`, since Milestone 4).
+
+The hard part wasn't the mark-sweep algorithm itself — it was finding
+every *root*. A tree-walking evaluator keeps live objects in ordinary C
+local variables scattered across however many `eval()` frames happen to
+be nested at any given moment, with no shadow stack tracking them. This
+collector handles that with **conservative stack/register scanning**
+(`setjmp` to spill registers, then scan from the current frame up to a
+`stackBottom` recorded once at startup), made fully *precise* rather than
+"probably correct" by checking each candidate stack word against a hash
+set of every currently-live allocation's exact address, rather than just
+guessing it "looks like" a pointer (the Boehm-Demers-Weiser collector's
+approach, which accepts false positives as the price of not walking off
+into unmapped memory).
+
+That conservative scan also found (and fixed) a real, subtle bug: a
+message send's evaluated arguments live in a plain heap array that
+*itself* was reachable from the C stack, but whose *contents* weren't —
+conservative scanning checks whether a stack word points at a tracked
+allocation, it doesn't recursively dereference what that allocation
+contains looking for further oops. `Block>>whileTrue:`/`whileFalse:`, which
+hold onto their body-block argument across many loop iterations, could
+therefore have that block collected out from under a still-running loop.
+Tagging argument arrays with their own GC kind (so the collector knows to
+trace *into* them) fixed it — see `CLAUDE.md` for the full story, including
+why it manifested as a runaway allocation loop rather than a clean crash,
+which is what made it slow to track down in the first place.
+
+**Try it:** there's no new surface syntax this milestone — collection is
+automatic and invisible in normal use. What's observable is that programs
+that allocate a lot no longer just grow forever:
+
+```
+st> Object subclass: #Adder instanceVariableNames: ''
+st> Adder compile: 'makeAdder: n  ^[:x | x + n]'
+st> add5 := Adder new makeAdder: 5
+st> n := 0
+st> sum := 0
+st> [n < 20000] whileTrue: [b := [:x | x + n]. sum := sum + (b value: 1). n := n + 1]
+st> sum          "200010000 -- 20000 throwaway blocks + activations, collected as it goes"
+st> add5 value: 100
+```
+
+Before this milestone, the loop above ran fine at small counts but
+accumulated unbounded memory (and, once the argument-array bug above is
+accounted for, could misbehave) at larger ones; now it runs in about a
+second regardless of iteration count, memory usage stays bounded, and
+`add5` — a closure that's been alive since before the loop started, never
+touched by anything inside it — still answers correctly afterward,
+proving the collector didn't free something still reachable.
 
 ## Milestone 6 — Bytecode compiler + VM dispatch loop ⏳
 

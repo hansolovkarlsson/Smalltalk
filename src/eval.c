@@ -1,7 +1,9 @@
 #include "eval.h"
+#include "activation.h"
 #include "block.h"
 #include "class.h"
 #include "environment.h"
+#include "gc.h"
 #include "stringobj.h"
 #include "symbol.h"
 
@@ -10,14 +12,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* One method or block-invocation activation. Every activation is
- * heap-allocated and never freed (see CLAUDE.md): a block literal
- * evaluated inside one captures a pointer to it (BlockObject.homeActivation,
- * block.h), and that block can escape and be invoked long after the
- * activation that created it would otherwise have returned -- e.g. stored
- * in a variable and called later, or returned as the method's result. A
- * stack-local Activation (as before blocks existed) would dangle in
- * exactly that case.
+/* Every activation is heap-allocated via gcAlloc(), not malloc()/a stack
+ * local: a block literal evaluated inside one captures a pointer to it
+ * (BlockObject.homeActivation, block.h), and that block can escape and be
+ * invoked long after the activation that created it would otherwise have
+ * returned -- e.g. stored in a variable and called later, or returned as
+ * the method's result. A stack-local Activation (as before blocks
+ * existed) would dangle in exactly that case; an unmanaged malloc'd one
+ * (as before garbage collection existed) would never be reclaimed even
+ * once truly unreachable. gc.c traces one via its own copy of this
+ * struct's layout (activation.h) -- see gcMarkActivation() there, and
+ * markRoots()'s use of evalCurrentActivation() below for how the
+ * in-progress call chain becomes a root without scanning the C stack for
+ * it specifically.
  *
  * lexicalParent is the closure chain: the activation that was current when
  * this one's code was *written* (for a method activation, always NULL --
@@ -33,23 +40,12 @@
  * activation it's always itself. caller is unrelated to either of these --
  * it's the ordinary dynamic call chain (who invoked this activation),
  * restored into currentActivation when this activation's call finishes. */
-typedef struct Activation {
-    oop self;
-    STClass *homeClass; /* method activations only; see homeMethodActivation */
-    char **argNames;
-    oop *argValues;
-    int argCount;
-    char **tempNames;
-    oop *tempValues;
-    int tempCount;
-    struct Activation *lexicalParent;
-    struct Activation *homeMethodActivation;
-    struct Activation *caller;
-    jmp_buf returnPoint; /* method activations only; longjmp target for '^' */
-    oop returnValue;     /* set just before longjmp into returnPoint */
-} Activation;
 
 static Activation *currentActivation = NULL;
+
+Activation *evalCurrentActivation(void) {
+    return currentActivation;
+}
 
 static oop invokeCompiledMethod(CompiledMethod *cm, oop receiver, oop *args);
 
@@ -110,7 +106,12 @@ static oop runStatementSequence(AstNode **stmts, int count, oop defaultValue, in
  * scope right after this call returns, but a block created in this method
  * body that captures this activation can outlive that. */
 static oop invokeCompiledMethod(CompiledMethod *cm, oop receiver, oop *args) {
-    Activation *act = malloc(sizeof(Activation));
+    /* gcAlloc() zero-initializes, so act is a safe (all-NULL/0) target for
+     * gcMarkActivation() even in the narrow window before every field
+     * below is set -- not that anything here currently triggers a nested
+     * collection in that window (only plain malloc() calls follow, not
+     * gcAlloc()), but future edits shouldn't have to reason about it. */
+    Activation *act = gcAlloc(GC_KIND_ACTIVATION, sizeof(Activation));
     act->self = receiver;
     act->homeClass = cm->homeClass;
     act->argNames = cm->argNames;
@@ -151,7 +152,7 @@ oop invokeBlock(oop blockOop, oop *args, int argc) {
         return nilObject;
     }
 
-    Activation *frame = malloc(sizeof(Activation));
+    Activation *frame = gcAlloc(GC_KIND_ACTIVATION, sizeof(Activation));
     frame->self = blk->homeActivation ? blk->homeActivation->self : nilObject;
     frame->homeClass = NULL; /* not a method activation; see homeMethodActivation */
     frame->argNames = blk->paramNames;
@@ -278,7 +279,7 @@ oop eval(AstNode *node) {
              * the grammar never produces. Fall back to just evaluating it. */
             return eval(node->as.returnValue);
         case AST_BLOCK_LITERAL: {
-            BlockObject *blk = malloc(sizeof(BlockObject));
+            BlockObject *blk = gcAlloc(GC_KIND_OOP, sizeof(BlockObject));
             blk->isa = BlockClass;
             blk->paramNames = node->as.blockLiteral.paramNames;
             blk->paramCount = node->as.blockLiteral.paramCount;
@@ -337,7 +338,15 @@ oop eval(AstNode *node) {
         case AST_KEYWORD_SEND: {
             AstNode *recvNode = node->as.keywordSend.receiver;
             int argc = node->as.keywordSend.argCount;
-            oop *args = malloc(sizeof(oop) * (size_t)argc);
+            /* GC_KIND_OOP_ARRAY, not a plain malloc: a primitive can hold
+             * onto this args pointer across several nested calls that may
+             * each trigger a collection (Block>>whileTrue:/whileFalse:
+             * re-reading args[0] every iteration) -- see gc.h's doc
+             * comment on GC_KIND_OOP_ARRAY for the bug this fixes. Never
+             * manually freed for the same reason a BlockObject's fields
+             * aren't: gcAlloc'd memory is only ever reclaimed by a
+             * collection once unreachable. */
+            oop *args = gcAlloc(GC_KIND_OOP_ARRAY, sizeof(oop) * (size_t)argc);
             for (int i = 0; i < argc; i++) {
                 args[i] = eval(node->as.keywordSend.args[i]);
             }
@@ -346,7 +355,6 @@ oop eval(AstNode *node) {
                 STClass *start = currentSuperclass();
                 if (!start) {
                     fprintf(stderr, "error: 'super' used outside a method\n");
-                    free(args);
                     return nilObject;
                 }
                 result = dispatchFrom(start, currentActivation->self, node->as.keywordSend.selector, args,
@@ -355,7 +363,6 @@ oop eval(AstNode *node) {
                 oop receiver = eval(recvNode);
                 result = sendMessage(receiver, node->as.keywordSend.selector, args, argc);
             }
-            free(args);
             return result;
         }
         case AST_CASCADE: {
@@ -373,13 +380,13 @@ oop eval(AstNode *node) {
                 CascadeMessage *m = &node->as.cascade.messages[i];
                 oop *args = NULL;
                 if (m->argCount > 0) {
-                    args = malloc(sizeof(oop) * (size_t)m->argCount);
+                    /* See the AST_KEYWORD_SEND case above: GC_KIND_OOP_ARRAY, not malloc. */
+                    args = gcAlloc(GC_KIND_OOP_ARRAY, sizeof(oop) * (size_t)m->argCount);
                     for (int j = 0; j < m->argCount; j++) {
                         args[j] = eval(m->args[j]);
                     }
                 }
                 result = sendMessage(receiver, m->selector, args, m->argCount);
-                free(args);
             }
             return result;
         }

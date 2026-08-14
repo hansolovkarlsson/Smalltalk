@@ -58,3 +58,13 @@ Block basics (`value`/`value:`/`value:value:`), a closure
 loop summing 0 through 4, and a recursive `Math>>fact:` that only works
 at all because `ifTrue:ifFalse:` now exists to terminate it — cross-check
 its answer against the built-in `SmallInteger>>factorial`.
+
+## `gc.st`
+
+20,000 iterations of a `whileTrue:` loop, each creating a throwaway
+closure and invoking it once — garbage collection is otherwise invisible
+from the language, so what this actually demonstrates is that it *ran*
+(finishes in about a second, not growing memory without bound the way it
+would have before this milestone) and that `add5`, a closure created
+*before* the loop and never touched by it, still answers correctly
+afterward — proof the collector didn't reclaim something still reachable.

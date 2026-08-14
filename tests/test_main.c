@@ -4,6 +4,7 @@
 
 #include "../src/class.h"
 #include "../src/eval.h"
+#include "../src/gc.h"
 #include "../src/object.h"
 #include "../src/parser.h"
 #include "../src/stringobj.h"
@@ -282,6 +283,92 @@ static void testRecursion(void) {
     printf("testRecursion passed\n");
 }
 
+/* Garbage that's never bound to anything should actually go away. This is
+ * inherently a little fuzzy for a *conservative* collector (see CLAUDE.md):
+ * a stale copy of a pointer can linger in an not-yet-overwritten C stack
+ * slot and keep something alive one collection longer than a precise GC
+ * would. So this checks for a substantial drop, not that every last object
+ * is gone -- allocating a few hundred throwaway strings makes "mostly
+ * accidentally still alive" implausible without it being a real bug. */
+static void testGCReclaimsGarbage(void) {
+    gcSetThreshold((size_t)-1); /* effectively "never auto-collect"; we trigger by hand below */
+    for (int i = 0; i < 500; i++) {
+        evalString("'this string is garbage and nothing keeps a reference to it'");
+    }
+    size_t before = gcLiveCount();
+    gcCollectNow();
+    size_t after = gcLiveCount();
+    assert(after < before / 2);
+
+    printf("testGCReclaimsGarbage passed\n");
+}
+
+static void testGCKeepsLiveVariable(void) {
+    evalString("x := 'keep me around'");
+    gcCollectNow();
+    oop x = evalString("x");
+    assert(strcmp(((StringObject *)x)->bytes, "keep me around") == 0);
+
+    printf("testGCKeepsLiveVariable passed\n");
+}
+
+/* A live closure must survive a real collection cycle -- both the
+ * BlockObject itself (reachable from the workspace variable it's bound
+ * to) and, transitively, the Activation it closed over (reachable only
+ * via the block's homeActivation, not any variable directly). */
+static void testGCKeepsLiveClosure(void) {
+    evalString("Object subclass: #Adder2 instanceVariableNames: ''");
+    evalString("Adder2 compile: 'makeAdder: n  ^[:x | x + n]'");
+    evalString("add7 := Adder2 new makeAdder: 7");
+    gcCollectNow();
+    assert(smallIntegerValue(evalString("add7 value: 3")) == 10);
+    gcCollectNow();
+    assert(smallIntegerValue(evalString("add7 value: 100")) == 107);
+
+    printf("testGCKeepsLiveClosure passed\n");
+}
+
+/* Regression test for a real bug: a message send's evaluated arguments
+ * (eval.c's AST_KEYWORD_SEND) are only ever reachable via conservative
+ * stack scanning, never a precise root -- so when Block>>whileTrue:
+ * holds onto its body-block argument across many iterations, a collection
+ * triggered mid-loop must still find it (via GC_KIND_OOP_ARRAY, see
+ * gc.h). Before that fix, the body block could be swept out from under a
+ * running loop, corrupting memory. A very low threshold forces many
+ * collections during this loop's ~200 iterations. */
+static void testGCDuringLoopWithBlockArgument(void) {
+    gcSetThreshold(256); /* tiny: forces a collection on almost every iteration */
+    evalString("Object subclass: #Adder3 instanceVariableNames: ''");
+    evalString("Adder3 compile: 'makeAdder: n  ^[:x | x + n]'");
+    evalString("keepAlive := Adder3 new makeAdder: 5");
+    evalString("n := 0");
+    evalString("sum := 0");
+    evalString("[n < 200] whileTrue: [b := [:x | x + n]. sum := sum + (b value: 1). n := n + 1]");
+    assert(smallIntegerValue(evalString("sum")) == 200 + (199 * 200) / 2);
+    assert(smallIntegerValue(evalString("keepAlive value: 100")) == 105);
+    gcSetThreshold(64 * 1024);
+
+    printf("testGCDuringLoopWithBlockArgument passed\n");
+}
+
+/* Same idea as above but for recursive method calls rather than a loop:
+ * a very low threshold forces several collections while many Activations
+ * (one per pending recursive call, see CLAUDE.md) are simultaneously
+ * "in progress" on the C stack, reachable only via the current
+ * Activation's ->caller chain. If that chain weren't a correct root, a
+ * mid-recursion collection would free an activation a pending call still
+ * needs, corrupting the computation -- so a correct final answer is a
+ * strong proxy for "nothing live was collected". */
+static void testGCDuringRecursion(void) {
+    gcSetThreshold(256);
+    evalString("Object subclass: #Math2 instanceVariableNames: ''");
+    evalString("Math2 compile: 'fact: n  n = 0 ifTrue: [^1]. ^n * (self fact: n - 1)'");
+    assert(smallIntegerValue(evalString("Math2 new fact: 12")) == 479001600);
+    gcSetThreshold(64 * 1024);
+
+    printf("testGCDuringRecursion passed\n");
+}
+
 /* Regression test: the REPL reuses one fixed line buffer across inputs.
  * isBinaryChar() used to treat '\0' as a valid selector character (since
  * strchr(set, '\0') always "matches" the set's own terminator), so lexing
@@ -307,6 +394,9 @@ static void testLexerBufferReuse(void) {
 }
 
 int main(void) {
+    int gcStackBottomMarker;
+    gcInit(&gcStackBottomMarker);
+
     testTagging();
     testParsePrecedence();
     testLexerBufferReuse();
@@ -327,6 +417,11 @@ int main(void) {
     testControlFlow();
     testNonLocalReturn();
     testRecursion();
+    testGCReclaimsGarbage();
+    testGCKeepsLiveVariable();
+    testGCKeepsLiveClosure();
+    testGCDuringLoopWithBlockArgument();
+    testGCDuringRecursion();
 
     printf("All tests passed.\n");
     return 0;

@@ -3,6 +3,7 @@
 
 #include "class.h"
 #include "eval.h"
+#include "gc.h"
 #include "parser.h"
 #include "stringobj.h"
 #include "symbol.h"
@@ -15,6 +16,14 @@ static void printResult(oop result) {
 }
 
 int main(int argc, char **argv) {
+    /* Must run before anything can allocate (gcInit() itself just records
+     * a stack-bottom pointer for gc.c's conservative scan, see gc.h) --
+     * gcStackBottomMarker's address, taken this early, sits below every
+     * frame this process will ever use, so scanning up to it from wherever
+     * a collection later triggers covers the whole live C call chain. */
+    int gcStackBottomMarker;
+    gcInit(&gcStackBottomMarker);
+
     bootstrapClasses();
 
     /* With a filename argument, read from that file instead of stdin --
@@ -32,7 +41,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("Smalltalk REPL (milestone 4). Type an expression, or 'quit' to exit.\n");
+    printf("Smalltalk REPL (milestone 5). Type an expression, or 'quit' to exit.\n");
 
     char line[1024];
     while (1) {

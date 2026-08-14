@@ -5,13 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A from-scratch Smalltalk interpreter/VM, written in C, built incrementally.
-Currently at **Milestone 4**: block literals with real closures, non-local
-`^return` through arbitrary call depth, and `ifTrue:ifFalse:`/`whileTrue:`
-built *from* blocks rather than special-cased in the evaluator — layered on
-top of Milestone 3's user-defined classes/compiled methods, Milestone 2's
-variables/String/Symbol/printString/cascades, and Milestone 1's object
-model and message dispatch. Still not a bytecode VM yet (see Roadmap
-below).
+Currently at **Milestone 5**: a real mark-sweep garbage collector, replacing
+the "`malloc` and never free" policy every earlier milestone deliberately
+relied on — layered on top of Milestone 4's block literals/closures/
+non-local return, Milestone 3's user-defined classes/compiled methods,
+Milestone 2's variables/String/Symbol/printString/cascades, and Milestone
+1's object model and message dispatch. Still not a bytecode VM yet (see
+Roadmap below).
 
 ## Commands
 
@@ -51,9 +51,9 @@ main.c: read line
 
 **Object representation** (`object.h`): `oop` is a tagged `intptr_t`. Low
 bit `1` = `SmallInteger` (value packed in the remaining bits, no heap
-allocation). Low bit `0` = pointer to a heap object. There is **no garbage
-collection** — everything is `malloc`'d and never freed; this is
-intentional for now, not an oversight.
+allocation). Low bit `0` = pointer to a heap object. As of Milestone 5,
+heap objects are **garbage collected** (`gc.c`) — see the dedicated section
+below.
 
 Four heap layouts exist (`object.h`, `stringobj.h`, `symbol.h`, `block.h`):
 `Object { STClass *isa; oop fields[]; }`, `StringObject { STClass *isa;
@@ -145,19 +145,22 @@ lexicalParent; homeMethodActivation; caller; returnPoint; returnValue; }`,
 points the file-static `currentActivation` at it, runs the statement list
 (via the shared `runStatementSequence()`, see below), and restores the
 caller's activation afterward — real recursion falls out of this being an
-ordinary C call inside `eval()`, no explicit call stack needed. Unlike
-Milestone 3, an `Activation` is now **heap-allocated and never freed**
-(`malloc`, matching the project's established "allocate and don't free"
-stance) rather than a stack local: a block literal evaluated inside a
-method captures a pointer to the currently-running `Activation`
-(`BlockObject.homeActivation`, `block.h`), and that block can escape and be
-invoked long after the method that created it has returned (stored in a
-variable, returned as the method's result, ...) — a stack-local
-`Activation` would dangle in exactly that case. Because of this,
-`invokeCompiledMethod()`/`invokeBlock()` also **copy** their incoming
-`args` into the activation's own storage rather than aliasing the caller's
-buffer, which is typically a short-lived local (e.g. `AST_KEYWORD_SEND`'s
-`args` in `eval()`) freed right after the call returns.
+ordinary C call inside `eval()`, no explicit call stack needed. Since
+Milestone 4, an `Activation` is **heap-allocated** (`gcAlloc(GC_KIND_
+ACTIVATION, ...)`, `activation.h`) rather than a stack local: a block
+literal evaluated inside a method captures a pointer to the
+currently-running `Activation` (`BlockObject.homeActivation`, `block.h`),
+and that block can escape and be invoked long after the method that
+created it has returned (stored in a variable, returned as the method's
+result, ...) — a stack-local `Activation` would dangle in exactly that
+case. Because of this, `invokeCompiledMethod()`/`invokeBlock()` also
+**copy** their incoming `args` into the activation's own storage rather
+than aliasing the caller's buffer, which is typically a short-lived local
+(e.g. `AST_KEYWORD_SEND`'s `args` in `eval()`) that outlives the call in a
+different, GC-tracked way (see the garbage collection section) but isn't
+itself something an `Activation` should hold a raw alias into. As of
+Milestone 5, an `Activation` that's no longer reachable is actually
+reclaimed, not just leaked — see below.
 
 **Blocks and closures** (`block.h`, `eval.c`): a block literal `[...]`
 evaluates (`AST_BLOCK_LITERAL` in `eval()`) to a `BlockObject` — its own
@@ -227,6 +230,127 @@ bar`) loses super-ness on every cascaded send after the first, since
 — documented inline at the `AST_CASCADE` case rather than threading
 super-dispatch through cascade rewriting too.
 
+**Garbage collection** (`gc.h`/`gc.c`): a stop-the-world mark-sweep
+collector. Every `gcAlloc(kind, size)`'d block gets a `GCHeader { next;
+size; kind; marked; }` prepended to it (invisible to callers — the pointer
+handed back is `header + 1`, so `(oop)` casts and `Object`-layout
+assumptions elsewhere are unaffected); headers form one intrusive linked
+list (`allocList`), walked in full by both mark and sweep. `GCKind` has
+three values: `GC_KIND_OOP` (an `Object`/`StringObject`/`SymbolObject`/
+`ClassObject`/`BlockObject`, traced via `isa` exactly like `classOf()`
+does), `GC_KIND_ACTIVATION` (an `activation.h` `Activation`, traced via its
+own known field layout), and `GC_KIND_OOP_ARRAY` (see below). Every
+previously-`malloc`'d oop-producing site (`class.c`'s `instantiate()`/
+`registerClass()`, `stringobj.c`'s `makeStringN()`, `symbol.c`'s
+`internSymbol()`, `eval.c`'s `AST_BLOCK_LITERAL` case and
+`invokeCompiledMethod()`/`invokeBlock()`'s `Activation` allocations) now
+goes through `gcAlloc()`. `STClass`, `CompiledMethod`, `MethodNode`/
+`AstNode` parse trees, and the intern table's `char*` names stay plain
+`malloc`'d and permanent, on purpose: class/method/AST metadata is never
+freed even by a real Smalltalk (short of an explicit "remove this class"
+feature this VM doesn't have), and none of them ever hold an `oop` value
+that would need tracing — an `STClass*`/`CompiledMethod*`/`AstNode*` is
+never smuggled into anything the collector treats as a tagged `oop`.
+
+**Roots**: `gcCollectNow()` marks, in order: `nilObject`/`trueObject`/
+`falseObject` (not bound in the environment — they're parser-level literal
+pseudo-variables, never `envSet()`); `envMarkRoots()` (`environment.c`,
+every workspace variable's value — this is also how a user-defined class
+survives, since `registerClass()` binds its `classOop` here too);
+`symbolMarkRoots()` (`symbol.c`, every interned Symbol, which is why a
+Symbol is in practice never collected, same as a real Smalltalk's
+SymbolTable); `gcMarkActivation(evalCurrentActivation())` (`eval.c`
+exposes its file-static `currentActivation`, whose `->caller` chain
+transitively covers every method/block call currently in progress on the
+C stack, and whose `BlockObject.homeActivation` reachability covers
+escaped closures); and finally a **conservative scan** of the C stack and
+registers (below). `gcMarkOop()`/the internal `gcMarkActivation()` are the
+precise, recursive tracers both this list and ordinary field-tracing
+(`Object.fields[]`, `Activation.argValues`/`tempValues`/`lexicalParent`/
+`caller`/`homeMethodActivation`) funnel through.
+
+**Conservative stack/register scanning** (`scanConservativeRoots()`): the
+one genuinely tricky part, needed because a tree-walking evaluator keeps
+live oops in ordinary C locals scattered across however many `eval()`
+frames are currently nested (e.g. `oop receiver = eval(...)` in
+`AST_BINARY_SEND`, computed but not yet stored anywhere a precise root
+walk would find it) — there is no shadow stack, and adding one would be a
+much larger, more invasive rewrite than this milestone's scope. `setjmp()`
+spills callee-saved registers into a local `jmp_buf`, which then gets
+scanned as part of the stack region alongside everything from
+`__builtin_frame_address(0)` (approximately "the innermost live frame
+right now") up to `stackBottom` (an address captured once, early in
+`main()`/`tests/test_main.c`'s `main()`, via `gcInit()` — **every**
+executable entry point must call this before anything can allocate, or
+the first collection scans from a null/garbage base and reads unmapped
+memory). Unlike a Boehm-style collector, which must *guess* whether a
+stack word "looks like" a valid heap pointer (any properly-aligned address
+landing inside a live allocation's bounds counts, false positives
+accepted as the price of not walking off into unmapped memory), this
+collector builds a `HeaderSet` — a hash set of every currently-live
+`GCHeader*`, rebuilt fresh each collection *before* sweeping — so a
+candidate stack word is checked for *exact* membership in O(1) average.
+This makes the conservative scan fully precise (no false-positive
+retention from a coincidental bit pattern), at the cost of an O(heap) hash
+set rebuild per collection — an accepted tradeoff at this VM's scale.
+`candidateHeaderOf()` deliberately computes the candidate's header address
+via `uintptr_t` arithmetic rather than real pointer arithmetic: forming an
+out-of-bounds *pointer* from an unvalidated bit pattern (even one that's
+merely computed, never dereferenced) is undefined behavior in C, caught by
+`-fsanitize=undefined` during this milestone's own testing — the
+`uintptr_t` version produces the identical address on every mainstream
+platform without tripping that check, the same trick the
+Boehm-Demers-Weiser collector uses.
+
+**`GC_KIND_OOP_ARRAY`, and the real bug it fixes**: a keyword send or
+cascade message's evaluated arguments (`eval.c`'s `AST_KEYWORD_SEND`/
+`AST_CASCADE` — unlike a binary send's fixed-size on-stack `oop args[1]`,
+a keyword selector's arity isn't known until parse time, so this has to be
+a heap array) are handed down into a primitive as a plain `oop *`. This
+was initially left as an ordinary `malloc()`, on the reasoning that it's
+freed right after the synchronous call returns anyway — true for most
+primitives, but **`Block>>whileTrue:`/`whileFalse:`** (`primitives.c`)
+hold onto their body-block argument across many iterations of an internal
+C `while` loop, re-reading `args[0]` from the heap array fresh every
+iteration. None of `gcMarkOop()`'s precise roots ever reach into that
+array (it's never stored in a variable, an instance field, or an
+`Activation`), and conservative scanning alone doesn't help either: it
+only checks whether a stack *word* is itself a live header's address, it
+never dereferences a heap pointer looking for further oops nested inside
+whatever it points to. The result, found empirically (not by inspection)
+while stress-testing this milestone: `[cond] whileTrue: [body]` with
+enough iterations for a collection to land mid-loop would have its `body`
+block **swept out from under the still-running loop** — a genuine
+use-after-free, which (since the freed memory usually got reused for
+something else entirely by the time it mattered) manifested as
+memory corruption masquerading as a runaway allocation loop, not a clean
+crash, making it slow to pin down. The fix: tag these argument arrays as
+`GC_KIND_OOP_ARRAY` (`gcAlloc()`'d, never manually `free()`'d) instead of
+plain `malloc()`. Conservative scanning already finds the array's *address*
+sitting in a legitimate stack-resident local — either `eval()`'s own
+`args`, or the primitive's own copy of that pointer as its `oop *args`
+parameter — for as long as that C frame is on the stack; `markCandidate()`
+recognizing the `GC_KIND_OOP_ARRAY` kind and marking every element inside
+(`gcMarkOopArray()`) is what makes that address, once found, actually
+protect the array's *contents* too. `tests/test_main.c`'s
+`testGCDuringLoopWithBlockArgument()` is the regression test, run with a
+deliberately tiny `gcSetThreshold()` to force a collection on nearly every
+iteration.
+
+**Sweep**: unmarked headers are unlinked and `free()`'d; for
+`GC_KIND_ACTIVATION` specifically, its `argValues`/`tempValues` buffers
+(plain `malloc()`'d, not separately `gcAlloc()`'d — see above) are freed
+first, since nothing else owns them. Surviving headers have `marked` reset
+to `0`, ready for the next collection. `gcAlloc()` triggers a collection
+when `bytesAllocated` crosses `gcThreshold` (starts at 64 KiB), and doubles
+the threshold afterward if the live set is still more than half of it —
+a simple growth heuristic that avoids thrashing on a program with a
+genuinely large working set, without needing anything more elaborate at
+this scale. Because the conservative scan makes a collection safe to
+trigger from *anywhere* (not just between top-level REPL statements), a
+long-running loop's garbage gets reclaimed as it goes, not just once the
+whole statement finishes.
+
 **Grammar/precedence** (`parser.c`): standard Smalltalk precedence — unary
 sends bind tightest and chain left-to-right, then binary sends (all equal
 precedence, left-to-right), then keyword sends (lowest, selector parts
@@ -277,6 +401,38 @@ at all (`[ statements ]`); one with parameters requires the `|` separator
 (`[:a :b | ...]`) — unlike `parseMethod()`'s temp declarations, block
 literals in this milestone have no `| temps |` of their own (a deliberate
 scope cut; use the enclosing method's temps instead).
+
+## Testing this codebase for memory bugs
+
+`gc.c` is the highest-risk file in this codebase for exactly the kind of
+bug regular tests don't reliably catch (a rare, timing-dependent
+use-after-free). When changing anything under `src/`, especially
+`gc.c`/`eval.c`/anything touching allocation, an ad hoc sanitizer build is
+worth running before trusting `make test` alone:
+
+```
+cc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -mllvm -asan-stack=0 \
+  -Isrc -o /tmp/run_tests_asan tests/test_main.c src/*.c && /tmp/run_tests_asan
+```
+
+`-mllvm -asan-stack=0` disables ASan's stack redzones specifically — a
+conservative collector *deliberately* reads raw stack bytes in the gaps
+between distinct local variables looking for leftover pointer values,
+which is precisely the pattern ASan's stack instrumentation exists to
+flag as a bug. Leaving stack instrumentation on produces a wall of
+false-positive `stack-buffer-underflow` reports pointing at
+`scanConservativeRoots`/`scanRange` in `gc.c` (a well-known, documented
+tension between conservative GC and ASan — the Boehm collector's own docs
+describe the same workaround). Heap-related bugs (use-after-free,
+double-free, heap buffer overflow) and UBSan's checks are unaffected by
+this flag and still fully active. `src/gc.c` and `src/eval.c` are the
+files most likely to produce a real finding here; a clean run doesn't
+prove there's no bug, but it's meaningfully stronger evidence than
+`make test` passing alone. (One pre-existing, unrelated UBSan finding is
+expected and not a regression: `object.h`'s `makeSmallInteger()` left-shifts
+a possibly-negative `intptr_t`, technically undefined behavior since
+Milestone 1, though every mainstream compiler/platform this project
+targets implements it as a plain arithmetic shift.)
 
 ## Roadmap
 
