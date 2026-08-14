@@ -126,12 +126,61 @@ showing instance-variable mutation and cascades together) live in
 `../examples/point.st` and `../examples/animals.st` — see
 `../examples/README.md`.
 
-## Milestone 4 — Blocks/closures, control flow 🚧
+## Milestone 4 — Blocks/closures, control flow ✅
 
 Block literals `[ ... ]`, closures over enclosing variables, non-local
 return, and `ifTrue:ifFalse:` / `whileTrue:` built *from* blocks rather
 than being special-cased in the evaluator — matching how real Smalltalk
 has almost no built-in control flow.
+
+This is also the milestone where recursive methods became genuinely
+useful: before this, there was no way for one to terminate itself (no
+`ifTrue:ifFalse:` to stop recursing on). See `Math>>fact:`/`fib:` below.
+
+What "real closures" required under the hood: an `Activation` (the
+per-call record of `self`/args/temps that a compiled method already had
+from Milestone 3) now has to **survive past the call that created it**,
+since a block can capture one and be invoked long after its defining
+method has returned — so activations moved from a stack-local to a
+heap-allocated (`malloc`, never freed, consistent with this project's "no
+GC yet" stance) record with a `lexicalParent` chain for variable capture.
+Non-local `^return` — needed because a block can run arbitrarily far down
+the C call stack from where it was written, e.g. invoked back into from
+`whileTrue:`'s C loop — uses `setjmp`/`longjmp` to unwind straight to the
+right method activation regardless of how many block calls are in
+between. See `CLAUDE.md` for the full mechanism.
+
+Also added alongside the headline features, since they were cheap once
+blocks existed: `and:`/`or:` (short-circuiting, block-argument versions of
+boolean combination) and `not`. Known gap: block literals have no `|
+temps |` of their own in this milestone (only their parameters) — use the
+enclosing method's temps instead.
+
+**Try it:**
+```
+st> [3 + 4] value
+st> [:a :b | a + b] value: 3 value: 4
+st> 3 < 4 ifTrue: ['yes'] ifFalse: ['no']
+
+st> Object subclass: #Adder instanceVariableNames: ''
+st> Adder compile: 'makeAdder: n  ^[:x | x + n]'
+st> add5 := Adder new makeAdder: 5
+st> add10 := Adder new makeAdder: 10
+st> add5 value: 1                      "6 -- each block closed over its own n"
+st> add10 value: 1                     "11"
+
+st> n := 0
+st> sum := 0
+st> [n < 5] whileTrue: [sum := sum + n. n := n + 1]
+st> sum                                "10"
+
+st> Object subclass: #Math instanceVariableNames: ''
+st> Math compile: 'fact: n  n = 0 ifTrue: [^1]. ^n * (self fact: n - 1)'
+st> Math new fact: 10                  "3628800, matches 10 factorial"
+```
+
+Fuller, runnable version of the above lives in `../examples/blocks.st` —
+see `../examples/README.md`.
 
 ## Milestone 5 — Garbage collection ⏳
 

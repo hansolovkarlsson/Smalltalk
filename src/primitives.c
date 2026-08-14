@@ -1,4 +1,5 @@
 #include "class.h"
+#include "eval.h"
 #include "parser.h"
 #include "stringobj.h"
 #include "symbol.h"
@@ -285,6 +286,123 @@ static oop prim_class_compile(oop receiver, oop *args, int argc) {
     return trueObject;
 }
 
+static oop prim_block_value0(oop receiver, oop *args, int argc) {
+    (void)args;
+    (void)argc;
+    return invokeBlock(receiver, NULL, 0);
+}
+
+static oop prim_block_value1(oop receiver, oop *args, int argc) {
+    (void)argc;
+    return invokeBlock(receiver, args, 1);
+}
+
+static oop prim_block_value2(oop receiver, oop *args, int argc) {
+    (void)argc;
+    return invokeBlock(receiver, args, 2);
+}
+
+/* [cond] whileTrue: [body] -- the receiver (a 0-arg block) is re-evaluated
+ * before each iteration; the loop runs while it answers true. Doesn't
+ * type-check that receiver's value is actually a Boolean, matching this
+ * codebase's usual primitive convention: anything other than true/false
+ * (including a non-Boolean that happens to share a bit pattern) just fails
+ * the `== trueObject` check and ends the loop rather than erroring. */
+static oop prim_block_whileTrue(oop receiver, oop *args, int argc) {
+    (void)argc;
+    while (invokeBlock(receiver, NULL, 0) == trueObject) {
+        invokeBlock(args[0], NULL, 0);
+    }
+    return nilObject;
+}
+
+static oop prim_block_whileFalse(oop receiver, oop *args, int argc) {
+    (void)argc;
+    while (invokeBlock(receiver, NULL, 0) == falseObject) {
+        invokeBlock(args[0], NULL, 0);
+    }
+    return nilObject;
+}
+
+static oop prim_true_ifTrue(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)argc;
+    return invokeBlock(args[0], NULL, 0);
+}
+
+static oop prim_true_ifFalse(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)args;
+    (void)argc;
+    return nilObject;
+}
+
+static oop prim_true_ifTrueIfFalse(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)argc;
+    return invokeBlock(args[0], NULL, 0);
+}
+
+static oop prim_false_ifTrue(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)args;
+    (void)argc;
+    return nilObject;
+}
+
+static oop prim_false_ifFalse(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)argc;
+    return invokeBlock(args[0], NULL, 0);
+}
+
+static oop prim_false_ifTrueIfFalse(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)argc;
+    return invokeBlock(args[1], NULL, 0);
+}
+
+/* and:/or: are the short-circuiting, block-argument counterparts to the
+ * (still unimplemented, see LANGUAGE.md) eager `&`/`|`: the block is only
+ * ever evaluated when its value could actually change the result. */
+static oop prim_true_and(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)argc;
+    return invokeBlock(args[0], NULL, 0);
+}
+
+static oop prim_true_or(oop receiver, oop *args, int argc) {
+    (void)args;
+    (void)argc;
+    return receiver;
+}
+
+static oop prim_false_and(oop receiver, oop *args, int argc) {
+    (void)args;
+    (void)argc;
+    return receiver;
+}
+
+static oop prim_false_or(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)argc;
+    return invokeBlock(args[0], NULL, 0);
+}
+
+static oop prim_true_not(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)args;
+    (void)argc;
+    return falseObject;
+}
+
+static oop prim_false_not(oop receiver, oop *args, int argc) {
+    (void)receiver;
+    (void)args;
+    (void)argc;
+    return trueObject;
+}
+
 void installPrimitives(void) {
     classAddPrimitive(SmallIntegerClass, "+", prim_add);
     classAddPrimitive(SmallIntegerClass, "-", prim_sub);
@@ -318,4 +436,24 @@ void installPrimitives(void) {
     classAddPrimitive(ClassClass, "subclass:instanceVariableNames:",
                        prim_class_subclass_instanceVariableNames);
     classAddPrimitive(ClassClass, "compile:", prim_class_compile);
+
+    classAddPrimitive(BlockClass, "value", prim_block_value0);
+    classAddPrimitive(BlockClass, "value:", prim_block_value1);
+    classAddPrimitive(BlockClass, "value:value:", prim_block_value2);
+    classAddPrimitive(BlockClass, "whileTrue:", prim_block_whileTrue);
+    classAddPrimitive(BlockClass, "whileFalse:", prim_block_whileFalse);
+
+    classAddPrimitive(TrueClass, "ifTrue:", prim_true_ifTrue);
+    classAddPrimitive(TrueClass, "ifFalse:", prim_true_ifFalse);
+    classAddPrimitive(TrueClass, "ifTrue:ifFalse:", prim_true_ifTrueIfFalse);
+    classAddPrimitive(TrueClass, "and:", prim_true_and);
+    classAddPrimitive(TrueClass, "or:", prim_true_or);
+    classAddPrimitive(TrueClass, "not", prim_true_not);
+
+    classAddPrimitive(FalseClass, "ifTrue:", prim_false_ifTrue);
+    classAddPrimitive(FalseClass, "ifFalse:", prim_false_ifFalse);
+    classAddPrimitive(FalseClass, "ifTrue:ifFalse:", prim_false_ifTrueIfFalse);
+    classAddPrimitive(FalseClass, "and:", prim_false_and);
+    classAddPrimitive(FalseClass, "or:", prim_false_or);
+    classAddPrimitive(FalseClass, "not", prim_false_not);
 }

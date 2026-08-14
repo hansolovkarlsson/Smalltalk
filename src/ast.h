@@ -17,11 +17,17 @@ typedef enum {
     AST_SELF,
     AST_SUPER,
     /* Only ever appears as a top-level statement inside a compiled method
-     * body (see parseMethod()) -- eval() never encounters one nested
-     * inside another expression, so "returning" is just "stop executing
-     * the method's statement list here", no non-local-return machinery
-     * needed yet. */
-    AST_RETURN
+     * body or a block body (see parseMethod()/parsePrimary()'s '[' case,
+     * which share parseStatements()) -- eval() never encounters one
+     * nested inside another expression, since the grammar has no way to
+     * produce that. Evaluating one always unwinds to the nearest
+     * *lexically enclosing method* activation (see eval.c's
+     * runStatementSequence()/Activation.homeMethodActivation) via
+     * setjmp/longjmp -- necessary because a block's statements can run
+     * arbitrarily far down the C call stack from where the block was
+     * defined (e.g. invoked from inside whileTrue:). */
+    AST_RETURN,
+    AST_BLOCK_LITERAL
 } AstNodeType;
 
 /* One ';'-separated message pattern in a cascade, e.g. the "add: 2" part
@@ -64,6 +70,12 @@ typedef struct AstNode {
             int messageCount;
         } cascade;
         struct AstNode *returnValue; /* AST_RETURN */
+        struct {
+            char **paramNames; /* interned, paramCount entries */
+            int paramCount;
+            struct AstNode **statements;
+            int statementCount;
+        } blockLiteral;
     } as;
 } AstNode;
 

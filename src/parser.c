@@ -39,6 +39,56 @@ static char *dupCString(const char *s) {
     return copy;
 }
 
+/* Parses a '.'-separated statement sequence (used by both a compiled
+ * method's body and a block literal's body -- see parseMethod() and the
+ * '[' case in parsePrimary() below), stopping at stopToken or TOK_EOF.
+ * Any statement may be '^expr' (AST_RETURN); as with the top-level
+ * grammar, that's never nested inside another expression. Returns 0 (and
+ * leaves p->errorMsg set) on a parse error partway through. The caller is
+ * responsible for checking that p->current.type == stopToken afterward --
+ * stopping short of that (without hitting TOK_EOF) means a statement
+ * wasn't followed by '.' or the terminator, e.g. two expressions with no
+ * separator between them. */
+static int parseStatements(Parser *p, TokenType stopToken, AstNode ***outStmts, int *outCount) {
+    AstNode **stmts = NULL;
+    int count = 0, capacity = 0;
+    while (p->current.type != stopToken && p->current.type != TOK_EOF) {
+        AstNode *stmt;
+        if (p->current.type == TOK_CARET) {
+            advance(p);
+            AstNode *value = parseExpression(p);
+            if (!value) return 0;
+            stmt = newNode(AST_RETURN);
+            stmt->as.returnValue = value;
+        } else {
+            stmt = parseExpression(p);
+            if (!stmt) return 0;
+        }
+        if (count == capacity) {
+            capacity = capacity ? capacity * 2 : 8;
+            stmts = realloc(stmts, sizeof(AstNode *) * capacity);
+        }
+        stmts[count++] = stmt;
+
+        if (p->current.type == TOK_DOT) {
+            advance(p);
+            continue;
+        }
+        break;
+    }
+    *outStmts = stmts;
+    *outCount = count;
+    return 1;
+}
+
+/* Is the current token the temp-declaration bar '|'? isBinaryChar() lets
+ * '|' start a multi-char binary token, so "||" (an empty temp list with no
+ * space between the bars) lexes as one TOK_BINARY token, not two -- both
+ * spellings are handled by every call site below. */
+static int atBar(Parser *p) {
+    return p->current.type == TOK_BINARY && strcmp(p->current.text, "|") == 0;
+}
+
 static AstNode *parsePrimary(Parser *p) {
     if (p->current.type == TOK_INT) {
         AstNode *n = newNode(AST_INT_LITERAL);
@@ -71,6 +121,44 @@ static AstNode *parsePrimary(Parser *p) {
         }
         advance(p);
         return inner;
+    }
+
+    if (p->current.type == TOK_LBRACKET) {
+        advance(p);
+
+        char **paramNames = NULL;
+        int paramCount = 0, paramCapacity = 0;
+        while (p->current.type == TOK_BLOCK_PARAM) {
+            if (paramCount == paramCapacity) {
+                paramCapacity = paramCapacity ? paramCapacity * 2 : 4;
+                paramNames = realloc(paramNames, sizeof(char *) * paramCapacity);
+            }
+            paramNames[paramCount++] = (char *)intern(p->current.text);
+            advance(p);
+        }
+        if (paramCount > 0) {
+            if (!atBar(p)) {
+                setError(p, "expected '|' after block parameters");
+                return NULL;
+            }
+            advance(p);
+        }
+
+        AstNode **stmts;
+        int stmtCount;
+        if (!parseStatements(p, TOK_RBRACKET, &stmts, &stmtCount)) return NULL;
+        if (p->current.type != TOK_RBRACKET) {
+            setError(p, "expected ']'");
+            return NULL;
+        }
+        advance(p);
+
+        AstNode *n = newNode(AST_BLOCK_LITERAL);
+        n->as.blockLiteral.paramNames = paramNames;
+        n->as.blockLiteral.paramCount = paramCount;
+        n->as.blockLiteral.statements = stmts;
+        n->as.blockLiteral.statementCount = stmtCount;
+        return n;
     }
 
     if (p->current.type == TOK_IDENTIFIER) {
@@ -307,14 +395,6 @@ AstNode *parseExpression(Parser *p) {
     return parseCascade(p);
 }
 
-/* Is the current token the temp-declaration bar '|'? isBinaryChar() lets
- * '|' start a multi-char binary token, so "||" (an empty temp list with no
- * space between the bars) lexes as one TOK_BINARY token, not two -- both
- * spellings are handled by the two call sites below. */
-static int atBar(Parser *p) {
-    return p->current.type == TOK_BINARY && strcmp(p->current.text, "|") == 0;
-}
-
 MethodNode *parseMethod(const char *src, char *errorMsg, size_t errorMsgSize) {
     Parser p;
     parserInit(&p, src);
@@ -395,39 +475,12 @@ MethodNode *parseMethod(const char *src, char *errorMsg, size_t errorMsgSize) {
     }
 
     /* --- statement sequence --- */
-    AstNode **stmts = NULL;
-    int stmtCount = 0, stmtCapacity = 0;
-    while (p.current.type != TOK_EOF) {
-        AstNode *stmt;
-        if (p.current.type == TOK_CARET) {
-            advance(&p);
-            AstNode *value = parseExpression(&p);
-            if (!value) {
-                snprintf(errorMsg, errorMsgSize, "%s", p.errorMsg);
-                free(m);
-                return NULL;
-            }
-            stmt = newNode(AST_RETURN);
-            stmt->as.returnValue = value;
-        } else {
-            stmt = parseExpression(&p);
-            if (!stmt) {
-                snprintf(errorMsg, errorMsgSize, "%s", p.errorMsg);
-                free(m);
-                return NULL;
-            }
-        }
-        if (stmtCount == stmtCapacity) {
-            stmtCapacity = stmtCapacity ? stmtCapacity * 2 : 8;
-            stmts = realloc(stmts, sizeof(AstNode *) * stmtCapacity);
-        }
-        stmts[stmtCount++] = stmt;
-
-        if (p.current.type == TOK_DOT) {
-            advance(&p);
-            continue;
-        }
-        break;
+    AstNode **stmts;
+    int stmtCount;
+    if (!parseStatements(&p, TOK_EOF, &stmts, &stmtCount)) {
+        snprintf(errorMsg, errorMsgSize, "%s", p.errorMsg);
+        free(m);
+        return NULL;
     }
     if (p.current.type != TOK_EOF) {
         snprintf(errorMsg, errorMsgSize, "unexpected token after statement");

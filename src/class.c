@@ -13,6 +13,7 @@ STClass *SmallIntegerClass;
 STClass *StringClass;
 STClass *SymbolClass;
 STClass *ClassClass;
+STClass *BlockClass;
 
 oop nilObject;
 oop trueObject;
@@ -149,6 +150,9 @@ void bootstrapClasses(void) {
      * owning a byte buffer. Real Smalltalk makes Symbol a String subclass;
      * that needs a shared indexable representation, which is future work. */
     SymbolClass = newClass("Symbol", ObjectClass);
+    /* A block literal's runtime value (block.h) -- new instances are only
+     * ever created by eval.c's AST_BLOCK_LITERAL case, never via `new`. */
+    BlockClass = newClass("Block", ObjectClass);
 
     nilObject = instantiate(UndefinedObjectClass);
     trueObject = instantiate(TrueClass);

@@ -11,6 +11,9 @@ typedef enum {
     TOK_ASSIGN,    /* := */
     TOK_SEMICOLON, /* ; (cascade separator) */
     TOK_CARET,     /* ^ (method return, only meaningful in method bodies) */
+    TOK_BLOCK_PARAM, /* :name (a block parameter, e.g. the ":a" in [:a | ...]) */
+    TOK_LBRACKET,  /* [ */
+    TOK_RBRACKET,  /* ] */
     TOK_LPAREN,
     TOK_RPAREN,
     TOK_DOT,

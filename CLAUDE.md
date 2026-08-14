@@ -5,11 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A from-scratch Smalltalk interpreter/VM, written in C, built incrementally.
-Currently at **Milestone 3**: user-defined classes and compiled
-Smalltalk-level methods (instance variables, `self`/`super`, `^return`),
-layered on top of Milestone 2's variables/String/Symbol/printString/cascades
-and Milestone 1's object model and message dispatch — still not a bytecode
-VM yet (see Roadmap below).
+Currently at **Milestone 4**: block literals with real closures, non-local
+`^return` through arbitrary call depth, and `ifTrue:ifFalse:`/`whileTrue:`
+built *from* blocks rather than special-cased in the evaluator — layered on
+top of Milestone 3's user-defined classes/compiled methods, Milestone 2's
+variables/String/Symbol/printString/cascades, and Milestone 1's object
+model and message dispatch. Still not a bytecode VM yet (see Roadmap
+below).
 
 ## Commands
 
@@ -53,17 +55,18 @@ allocation). Low bit `0` = pointer to a heap object. There is **no garbage
 collection** — everything is `malloc`'d and never freed; this is
 intentional for now, not an oversight.
 
-Three heap layouts exist (`object.h`, `stringobj.h`, `symbol.h`):
+Four heap layouts exist (`object.h`, `stringobj.h`, `symbol.h`, `block.h`):
 `Object { STClass *isa; oop fields[]; }`, `StringObject { STClass *isa;
-long length; char bytes[]; }`, and `SymbolObject { STClass *isa; const char
-*name; }`. All three start with `STClass *isa` as their first field, so
-`classOf()` (`class.c`) can read it uniformly by casting any heap oop to
-`Object*` regardless of which concrete struct it actually points to —
-deliberate, CPython-style type-punning on a common initial field, not an
-accident. A primitive function knows its receiver's real layout from which
-class it's registered under (e.g. String primitives cast to `StringObject*`
-directly) — primitives do **not** type-check their arguments before
-casting.
+long length; char bytes[]; }`, `SymbolObject { STClass *isa; const char
+*name; }`, and `BlockObject { STClass *isa; paramNames; paramCount;
+statements; statementCount; homeActivation; }`. All four start with
+`STClass *isa` as their first field, so `classOf()` (`class.c`) can read it
+uniformly by casting any heap oop to `Object*` regardless of which concrete
+struct it actually points to — deliberate, CPython-style type-punning on a
+common initial field, not an accident. A primitive function knows its
+receiver's real layout from which class it's registered under (e.g. String
+primitives cast to `StringObject*` directly) — primitives do **not**
+type-check their arguments before casting.
 
 **Classes** (`class.h`/`class.c`): `STClass` (named to avoid colliding with
 the Objective-C runtime's `Class`/`class` on macOS — headers here get
@@ -137,38 +140,92 @@ wraps it in a `CompiledMethod` (`class.h`) and installs it via
 `classAddCompiledMethod()`. Dispatch (`dispatchFrom()`/`sendMessage()` in
 `eval.c`) checks `MethodEntry.kind`: primitives call straight through as
 before, compiled methods go through `invokeCompiledMethod()`, which builds
-a stack-allocated `Activation { self; homeClass; argNames/argValues;
-tempNames/tempValues; caller; }`, points the file-static `currentActivation`
-at it, runs the statement list, and restores the caller's activation
-afterward — real recursion falls out of this being an ordinary C call
-inside `eval()`, no explicit call stack needed. A statement list with no
-`^` returns `self` by default (real Smalltalk semantics, *not* the last
-statement's value); `^` only ever appears as a top-level statement (the
-method grammar has no way to nest one inside another expression), so
-"returning" is just "stop the statement loop here" — no non-local-return
-machinery (blocks don't exist yet, so there's nothing to return non-locally
-*out of* besides the method itself).
+an `Activation { self; homeClass; argNames/argValues; tempNames/tempValues;
+lexicalParent; homeMethodActivation; caller; returnPoint; returnValue; }`,
+points the file-static `currentActivation` at it, runs the statement list
+(via the shared `runStatementSequence()`, see below), and restores the
+caller's activation afterward — real recursion falls out of this being an
+ordinary C call inside `eval()`, no explicit call stack needed. Unlike
+Milestone 3, an `Activation` is now **heap-allocated and never freed**
+(`malloc`, matching the project's established "allocate and don't free"
+stance) rather than a stack local: a block literal evaluated inside a
+method captures a pointer to the currently-running `Activation`
+(`BlockObject.homeActivation`, `block.h`), and that block can escape and be
+invoked long after the method that created it has returned (stored in a
+variable, returned as the method's result, ...) — a stack-local
+`Activation` would dangle in exactly that case. Because of this,
+`invokeCompiledMethod()`/`invokeBlock()` also **copy** their incoming
+`args` into the activation's own storage rather than aliasing the caller's
+buffer, which is typically a short-lived local (e.g. `AST_KEYWORD_SEND`'s
+`args` in `eval()`) freed right after the call returns.
 
-**Variable resolution inside a method body** (`activationLookup()`/
-`activationStore()` in `eval.c`): for `AST_VARIABLE_REF`/`AST_ASSIGNMENT`,
-check the current activation's args, then temps, then `self`'s class's
-instance variables (`classOf(currentActivation->self)`, so subclass
-overrides still see the right indices — layouts are cumulative, see
-above), falling back to the global environment only if none of those match.
-`self`/`super` are dedicated `AST_SELF`/`AST_SUPER` node types (recognized
-in `parsePrimary()` alongside `nil`/`true`/`false`), not ordinary variable
-refs — both evaluate to `currentActivation->self`, but a message *sent to*
-a literal `super` receiver dispatches differently: `AST_UNARY_SEND`/
-`AST_BINARY_SEND`/`AST_KEYWORD_SEND` in `eval.c` each check whether their
-receiver sub-node is `AST_SUPER` and, if so, call `dispatchFrom()` starting
-at `currentActivation->homeClass->superclass` (the class the *running*
-method was compiled into, not `classOf(self)`) instead of going through
-plain `sendMessage()`. Known gap: cascading directly off a bare `super`
-receiver (`super foo; bar`) loses super-ness on every cascaded send after
-the first, since `decomposeSend()`/`AST_CASCADE` evaluate the receiver once
-via plain `eval()` and dispatch every cascaded message with ordinary
-`sendMessage()` — documented inline at the `AST_CASCADE` case rather than
-threading super-dispatch through cascade rewriting too.
+**Blocks and closures** (`block.h`, `eval.c`): a block literal `[...]`
+evaluates (`AST_BLOCK_LITERAL` in `eval()`) to a `BlockObject` — its own
+AST (shared across every invocation, never copied) plus
+`homeActivation = currentActivation` at the moment the literal was
+evaluated. That capture *is* the entire closure mechanism. Invoking a block
+(`invokeBlock()`, exposed via `eval.h` for `value`/`value:`/`value:value:`/
+`whileTrue:`/`ifTrue:ifFalse:`/etc in `primitives.c`) builds another
+`Activation` whose `lexicalParent` is the block's `homeActivation` and
+whose `self` is inherited from it (so a block shares `self` with its
+enclosing method, transitively through any depth of block nesting).
+`activationLookup()`/`activationStore()` (`AST_VARIABLE_REF`/
+`AST_ASSIGNMENT` in `eval()`) walk this `lexicalParent` chain — the current
+activation's own args/temps, then its parent's, and so on out to the
+enclosing method — before falling back to instance variables (checked once
+against `currentActivation->self`, since `self` is identical across the
+whole chain by construction) and then the global environment. This is what
+lets a nested block see an outer block's or the method's variables, not
+just its own parameters.
+
+A method's statement list and a block's statement list are both run by the
+same `runStatementSequence()`, which differs only in what "fell off the
+end without a `^`" answers: a method answers `self` (real Smalltalk
+semantics, *not* its last statement's value); a block answers its last
+statement's value (or `nil` if empty) — genuinely different defaults, not
+just a formatting choice, so the two callers pass different flags rather
+than sharing one hardcoded default.
+
+**Non-local return** (`runStatementSequence()`/`invokeCompiledMethod()` in
+`eval.c`): `^` always means "return from the nearest *lexically* enclosing
+method", never "return from this block" — found by walking `lexicalParent`
+up to `homeMethodActivation` (a method activation's own
+`homeMethodActivation` is always itself). Because a block can be invoked
+from arbitrarily far down the C call stack from where it was defined (e.g.
+handed to `whileTrue:`, which calls back into it from a C loop several
+frames removed from the original method call), a plain C `return` cannot
+unwind that distance. Every `^`, whether written directly in a method's own
+top-level statements or nested several blocks deep, therefore does
+`longjmp()` back to a `setjmp()` planted once per method activation, in
+`invokeCompiledMethod()`, right before running its statement list — even a
+`^` at the method's own top level goes through this same `longjmp()` back
+to its own immediately-enclosing frame, which is legal C and avoids needing
+a separate "am I already at the right frame?" fast path. `^` used where
+there's no enclosing method at all (a block defined and run at the REPL
+top level) prints `error: '^' used outside a method` and just uses the
+value locally instead of jumping — mirroring `self`/`super`'s existing
+"used outside a method" error pattern.
+
+**Variable resolution and `super`**: `self`/`super` are dedicated
+`AST_SELF`/`AST_SUPER` node types (recognized in `parsePrimary()` alongside
+`nil`/`true`/`false`), not ordinary variable refs — both evaluate to
+`currentActivation->self`, but a message *sent to* a literal `super`
+receiver dispatches differently: `AST_UNARY_SEND`/`AST_BINARY_SEND`/
+`AST_KEYWORD_SEND` in `eval.c` each check whether their receiver sub-node
+is `AST_SUPER` and, if so, call `dispatchFrom()` starting at
+`currentSuperclass()` — `currentActivation->homeMethodActivation->homeClass
+->superclass`, i.e. the defining class of the nearest lexically enclosing
+*method* (not `currentActivation->homeClass` directly, which is only ever
+set on a method activation; a block activation's own `homeClass` is unused
+precisely so this indirection is the only path that matters) — instead of
+going through plain `sendMessage()`. This means `super` now works correctly
+from inside a block written in a method body, e.g. `self do: [super foo]`.
+Known gap: cascading directly off a bare `super` receiver (`super foo;
+bar`) loses super-ness on every cascaded send after the first, since
+`decomposeSend()`/`AST_CASCADE` evaluate the receiver once via plain
+`eval()` and dispatch every cascaded message with ordinary `sendMessage()`
+— documented inline at the `AST_CASCADE` case rather than threading
+super-dispatch through cascade rewriting too.
 
 **Grammar/precedence** (`parser.c`): standard Smalltalk precedence — unary
 sends bind tightest and chain left-to-right, then binary sends (all equal
@@ -204,9 +261,22 @@ environment); any other bare identifier parses as `AST_VARIABLE_REF` and is
 resolved at eval time. `parseMethod()` (`parser.c`) is a second, separate
 top-level entry point alongside `parseExpression()` — it doesn't parse a
 normal expression at all, but a method's pattern/temps/statement-list
-grammar, reusing `parseExpression()` only for each individual statement (or
-each `^`-prefixed one, `TOK_CARET` being the one token `parseExpression()`
-itself never consumes).
+grammar. A block literal `[ (:param)* '|'? statements ]` is parsed as part
+of `parsePrimary()` (so it can appear anywhere a literal can, e.g. as a
+keyword-send argument to `ifTrue:ifFalse:`); it shares a `parseStatements()`
+helper with `parseMethod()`'s own statement-list tail rather than
+duplicating that loop, since both are "`.`-separated statements, any of
+which may be `^expr`, until some terminator token" — they differ only in
+what that terminator is (`TOK_EOF` for a method, `TOK_RBRACKET` for a
+block). Block parameters are their own token, `TOK_BLOCK_PARAM` (`:name`,
+lexed as a unit in `lexer.c`) — deliberately distinct from a keyword part's
+*trailing* colon (`name:`, `TOK_KEYWORD`) so the lexer doesn't need any
+parser-side context to tell `[:a | ...]`'s parameter from an ordinary
+identifier. A block with no parameters has no leading `:name`s and no `|`
+at all (`[ statements ]`); one with parameters requires the `|` separator
+(`[:a :b | ...]`) — unlike `parseMethod()`'s temp declarations, block
+literals in this milestone have no `| temps |` of their own (a deliberate
+scope cut; use the enclosing method's temps instead).
 
 ## Roadmap
 

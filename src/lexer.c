@@ -77,6 +77,32 @@ Token lexerNext(Lexer *lx) {
         lx->expectOperand = 1;
         return tok;
     }
+    if (c == ':' && (isalpha((unsigned char)lx->src[lx->pos + 1]) || lx->src[lx->pos + 1] == '_')) {
+        lx->pos++; /* consume ':', leaving the parameter name to scan below */
+        int start = lx->pos;
+        while (isalnum((unsigned char)lx->src[lx->pos]) || lx->src[lx->pos] == '_') {
+            lx->pos++;
+        }
+        int len = lx->pos - start;
+        if (len >= (int)sizeof(tok.text)) len = (int)sizeof(tok.text) - 1;
+        memcpy(tok.text, lx->src + start, len);
+        tok.text[len] = '\0';
+        tok.type = TOK_BLOCK_PARAM;
+        lx->expectOperand = 0;
+        return tok;
+    }
+    if (c == '[') {
+        lx->pos++;
+        tok.type = TOK_LBRACKET;
+        lx->expectOperand = 1;
+        return tok;
+    }
+    if (c == ']') {
+        lx->pos++;
+        tok.type = TOK_RBRACKET;
+        lx->expectOperand = 0;
+        return tok;
+    }
 
     if (c == '\'') {
         lx->pos++; /* consume opening quote */

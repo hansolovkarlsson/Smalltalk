@@ -195,6 +195,93 @@ static void testReflection(void) {
     printf("testReflection passed\n");
 }
 
+static void testBlocks(void) {
+    assert(smallIntegerValue(evalString("[3 + 4] value")) == 7);
+    assert(smallIntegerValue(evalString("[:a :b | a + b] value: 3 value: 4")) == 7);
+    assert(smallIntegerValue(evalString("[:x | x * 2] value: 5")) == 10);
+
+    /* Falls off the end without '^': answers the LAST statement's value,
+     * unlike a method (which would default to self). */
+    assert(smallIntegerValue(evalString("[1. 2. 3] value")) == 3);
+
+    printf("testBlocks passed\n");
+}
+
+static void testClosures(void) {
+    evalString("Object subclass: #Adder instanceVariableNames: ''");
+    evalString("Adder compile: 'makeAdder: n  ^[:x | x + n]'");
+
+    /* Each call to makeAdder: creates its own activation, so each
+     * returned block closes over its OWN n -- proof this is a real
+     * closure, not just "read the most recent n" dynamic scoping (the
+     * defining activation has already returned by the time these run). */
+    evalString("add5 := Adder new makeAdder: 5");
+    evalString("add10 := Adder new makeAdder: 10");
+    assert(smallIntegerValue(evalString("add5 value: 1")) == 6);
+    assert(smallIntegerValue(evalString("add10 value: 1")) == 11);
+    assert(smallIntegerValue(evalString("add5 value: 100")) == 105);
+
+    printf("testClosures passed\n");
+}
+
+static void testControlFlow(void) {
+    assert(strcmp(((StringObject *)evalString("3 < 4 ifTrue: ['yes'] ifFalse: ['no']"))->bytes, "yes") == 0);
+    assert(strcmp(((StringObject *)evalString("3 > 4 ifTrue: ['yes'] ifFalse: ['no']"))->bytes, "no") == 0);
+    assert(evalString("3 > 4 ifTrue: ['yes']") == nilObject);
+
+    assert(evalString("true and: [false]") == falseObject);
+    assert(evalString("true or: [false]") == trueObject);
+    /* Short-circuit: the block is never invoked, so a selector that would
+     * DNU-error if it ran must not run. */
+    assert(evalString("false and: [1 zork]") == falseObject);
+    assert(evalString("true or: [1 zork]") == trueObject);
+
+    assert(evalString("true not") == falseObject);
+    assert(evalString("false not") == trueObject);
+
+    evalString("n := 0");
+    evalString("sum := 0");
+    evalString("[n < 5] whileTrue: [sum := sum + n. n := n + 1]");
+    assert(smallIntegerValue(evalString("sum")) == 10);
+
+    printf("testControlFlow passed\n");
+}
+
+/* '^' inside a block always returns from the *method*, not the block --
+ * and must work even when the block is invoked from several dynamic call
+ * frames away from that method (here: through whileTrue:'s C-level loop
+ * and another block's `value:`), which is exactly the case a naive "just
+ * return normally" implementation can't handle and setjmp/longjmp exists
+ * for (see eval.c's runStatementSequence()). */
+static void testNonLocalReturn(void) {
+    evalString("Object subclass: #Finder instanceVariableNames: ''");
+    evalString(
+        "Finder compile: 'firstOver: limit  "
+        "| i | i := 0. "
+        "[true] whileTrue: [i := i + 1. i > limit ifTrue: [^i]]'");
+    assert(smallIntegerValue(evalString("Finder new firstOver: 41")) == 42);
+
+    evalString("Finder compile: 'callBlock: aBlock  ^aBlock value'");
+    evalString("Finder compile: 'earlyOut  self callBlock: [^777]. ^0'");
+    assert(smallIntegerValue(evalString("Finder new earlyOut")) == 777);
+
+    printf("testNonLocalReturn passed\n");
+}
+
+/* Recursive methods had no way to terminate before ifTrue:ifFalse:
+ * existed (see docs/LANGUAGE.md's Known Limitations, pre-Milestone-4).
+ * Cross-checked against SmallInteger>>factorial's iterative primitive. */
+static void testRecursion(void) {
+    evalString("Object subclass: #Math instanceVariableNames: ''");
+    evalString("Math compile: 'fact: n  n = 0 ifTrue: [^1]. ^n * (self fact: n - 1)'");
+    assert(smallIntegerValue(evalString("Math new fact: 10")) == smallIntegerValue(evalString("10 factorial")));
+
+    evalString("Math compile: 'fib: n  n < 2 ifTrue: [^n]. ^(self fib: n - 1) + (self fib: n - 2)'");
+    assert(smallIntegerValue(evalString("Math new fib: 10")) == 55);
+
+    printf("testRecursion passed\n");
+}
+
 /* Regression test: the REPL reuses one fixed line buffer across inputs.
  * isBinaryChar() used to treat '\0' as a valid selector character (since
  * strchr(set, '\0') always "matches" the set's own terminator), so lexing
@@ -235,6 +322,11 @@ int main(void) {
     testSuperAndInheritance();
     testMethodRedefinition();
     testReflection();
+    testBlocks();
+    testClosures();
+    testControlFlow();
+    testNonLocalReturn();
+    testRecursion();
 
     printf("All tests passed.\n");
     return 0;

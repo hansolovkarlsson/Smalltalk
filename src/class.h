@@ -71,6 +71,7 @@ extern STClass *SmallIntegerClass;
 extern STClass *StringClass;
 extern STClass *SymbolClass;
 extern STClass *ClassClass;
+extern STClass *BlockClass;
 
 extern oop nilObject;
 extern oop trueObject;

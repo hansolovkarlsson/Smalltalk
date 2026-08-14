@@ -48,3 +48,13 @@ Smalltalk dialects) — each example calls it explicitly, e.g. `Counter new
 initialize`. Forgetting to would leave `count` as `nil`, and `count + 1`
 would fail (see `../docs/LANGUAGE.md`'s Known Limitations: primitives don't
 type-check their arguments).
+
+## `blocks.st`
+
+Block basics (`value`/`value:`/`value:value:`), a closure
+(`Adder>>makeAdder:` returns `[:x | x + n]` — each call captures its
+*own* `n`, so `add5` and `add10` stay independent even after
+`makeAdder:`'s own call has returned), `ifTrue:ifFalse:`, a `whileTrue:`
+loop summing 0 through 4, and a recursive `Math>>fact:` that only works
+at all because `ifTrue:ifFalse:` now exists to terminate it — cross-check
+its answer against the built-in `SmallInteger>>factorial`.

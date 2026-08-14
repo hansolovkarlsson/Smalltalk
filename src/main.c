@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("Smalltalk REPL (milestone 3). Type an expression, or 'quit' to exit.\n");
+    printf("Smalltalk REPL (milestone 4). Type an expression, or 'quit' to exit.\n");
 
     char line[1024];
     while (1) {
