@@ -65,6 +65,12 @@ Token lexerNext(Lexer *lx) {
         lx->expectOperand = 1;
         return tok;
     }
+    if (c == '^') {
+        lx->pos++;
+        tok.type = TOK_CARET;
+        lx->expectOperand = 1;
+        return tok;
+    }
     if (c == ':' && lx->src[lx->pos + 1] == '=') {
         lx->pos += 2;
         tok.type = TOK_ASSIGN;

@@ -1,6 +1,6 @@
 # Language Reference
 
-What the interpreter actually accepts and does right now — Milestone 2.
+What the interpreter actually accepts and does right now — Milestone 3.
 This documents observable REPL behavior, not internals; see `CLAUDE.md` for
 how it's implemented and `ROADMAP.md` for what's coming next. Every example
 below was run against the built interpreter, not written from memory.
@@ -48,10 +48,20 @@ selector characters (`#+`, `#<=`). Symbols are interned: two occurrences of
 
 ### Pseudo-variables
 
-`nil`, `true`, and `false` are reserved literal tokens recognized by the
-parser itself, not ordinary variables — you can't reassign them (`nil :=
-3` doesn't parse as an assignment; `nil` wins and `:= 3` is leftover,
-unconsumed input, silently ignored — see below).
+`nil`, `true`, `false`, `self`, and `super` are reserved literal tokens
+recognized by the parser itself, not ordinary variables — you can't
+reassign any of them (`nil := 3` doesn't parse as an assignment; `nil`
+wins and `:= 3` is leftover, unconsumed input, silently ignored — see
+below).
+
+`self` and `super` are only meaningful inside a compiled method body (see
+[Defining classes and methods](#defining-classes-and-methods)); using
+either at the top level of the REPL prints `error: 'self' used outside a
+method` (or `'super'`) and evaluates to `nil`, the same non-fatal pattern
+as every other error case. Both evaluate to the same object — the method's
+receiver — but a message *sent to* `super` looks up starting from the
+superclass of the class the running method was defined in, not from the
+receiver's own class; see below.
 
 ### Identifiers and selectors
 
@@ -126,9 +136,101 @@ prints `7` and silently drops `5 + 6` — it is *not* evaluated, and you get
 no error telling you it was ignored. Don't rely on `.` to sequence
 statements yet; one expression per line, full stop.
 
+## Defining classes and methods
+
+### Subclassing
+
+```
+st> Object subclass: #Point instanceVariableNames: 'x y'
+Point
+```
+
+Sent to any existing class, `subclass:instanceVariableNames:` creates a
+new class and binds its name (from the Symbol argument) as a global
+variable, exactly like `x := ...` binds `x` — so `Point` is immediately
+usable as an identifier. The second argument is a String of
+space-separated instance variable names (`''` for none). Instance
+variables are inherited: subclassing a class that already has some adds
+the new ones after them, and a fresh instance's variables all start out
+`nil`.
+
+Only `Object` and its (transitive) subclasses make sense as a superclass
+here. `new` always allocates the plain `{ instance variables }` layout
+regardless of which class you subclass, so subclassing `String`, `Symbol`,
+or `SmallInteger` wouldn't preserve *their* special internal
+representation — don't do that.
+
+### Methods
+
+There's no multi-line class-body syntax yet (the REPL still reads one line
+at a time) — methods are installed by sending `compile:` a String of
+Smalltalk method source:
+
+```
+st> Point compile: 'setX: ax setY: ay  x := ax. y := ay. ^self'
+true
+st> Point compile: 'x  ^x'
+true
+```
+
+A method source string is: a **pattern** (unary `foo`, binary `+ arg`, or
+keyword `at: a put: b`, exactly like a message send's shape), an optional
+`| temp1 temp2 |` declaration, then a `.`-separated sequence of
+statements. Any statement may be `^expr` to return that value immediately
+and skip the rest; a method that never hits a `^` returns `self` (**not**
+its last statement's value — this differs from some Smalltalk dialects
+that also default to `self` but easy to forget if you're expecting the
+last expression's value back). `compile:` answers `true` on success, or
+`false` (with a `parse error`-style message on stderr) if the source
+doesn't parse. Recompiling an existing selector **replaces** it in place —
+there's no warning, and no way to keep both versions.
+
+Inside a method body: `self` is the receiver; instance variable names
+resolve directly (no `self x`/getter needed, just `x`); `super foo` sends
+`foo` starting lookup at the superclass of the class the method was
+*defined* in (so an overriding method can still reach the inherited
+behavior it's overriding), rather than the receiver's actual class.
+Arguments and temps are ordinary assignable local names, scoped to that
+one method activation — real recursion works (each call gets its own
+activation, same way C's own call stack works), though there's no `[ ... ]`
+block syntax yet to write loops or conditionals *inside* a method (see
+[Known limitations](#known-limitations)), so a recursive method needs a
+non-recursive way to terminate, which the language doesn't yet have — in
+practice this makes recursive methods hard to write usefully until
+Milestone 4 lands blocks and `ifTrue:ifFalse:`.
+
+```
+st> Point compile: '+ aPoint  ^Point new setX: x + aPoint x setY: y + aPoint y'
+true
+st> p := Point new setX: 3 setY: 4
+a Point
+st> q := Point new setX: 1 setY: 2
+a Point
+st> (p + q) x
+4
+```
+
+```
+st> Object subclass: #Animal instanceVariableNames: 'name'
+Animal
+st> Animal compile: 'setName: n  name := n. ^self'
+true
+st> Animal compile: 'speak  ^name , '' makes a sound'''
+true
+st> Animal subclass: #Dog instanceVariableNames: ''
+Dog
+st> Dog compile: 'speak  ^super speak , ''! (woof)'''
+true
+st> Dog new setName: 'Rex'; speak
+'Rex makes a sound! (woof)'
+```
+
 ## The class library
 
-Six classes exist, all bootstrapped in C — none are user-definable yet.
+Seven classes are bootstrapped in C: the six from Milestone 2 plus `Class`
+(every class's class — see [Reflection](#reflection) below). Any number of
+further classes can now be defined at runtime via `subclass:
+instanceVariableNames:`, as shown above.
 
 ```
 Object
@@ -138,7 +240,9 @@ Object
 │   └── False
 ├── SmallInteger
 ├── String
-└── Symbol
+├── Symbol
+├── Class              (every class's class, incl. Class itself)
+└── ...                (your subclass:instanceVariableNames: classes)
 ```
 
 Every class inherits `printString` from `Object` unless listed otherwise
@@ -147,11 +251,31 @@ chosen by whether the class name starts with a vowel). This is also what
 the REPL calls to render every result, so anything without a more specific
 override prints as `a Foo`.
 
+### Reflection
+
+There's no `isKindOf:`, `respondsTo:`, or method introspection yet, but
+every object answers `class`:
+
+```
+st> 3 class printString
+'SmallInteger'
+st> Point class printString
+'Class'
+```
+
+`class` is defined once, on `Object`, and inherited by everything —
+including class objects themselves, since `Class` is (now) a subclass of
+`Object` too. That last example is not a typo: there's no real per-class
+metaclass here, so *every* class's `class` is the same `Class` object,
+unlike real Smalltalk where `Point class` would answer a distinct
+`Point class` metaclass. See [Known limitations](#known-limitations).
+
 ### Object
 
 | Selector | Behavior |
 |---|---|
 | `printString` | `'a ClassName'` / `'an ClassName'` — the fallback every other class overrides |
+| `class` | The receiver's class, as a class object (see [Reflection](#reflection)). |
 
 ### UndefinedObject — the class of `nil`
 
@@ -202,6 +326,20 @@ you mutate one in place yet).
 Symbols are interned at parse/eval time (see [Symbols](#symbols)) but
 there's no `==` primitive yet to check identity from the REPL directly.
 
+### Class — every class's class
+
+Every class object (`Object`, `Point`, `Animal`, ...) is an instance of
+`Class`; sending it these selectors is how you define more of the class
+library at runtime. See [Defining classes and methods](#defining-classes-and-methods)
+for the full grammar and worked examples.
+
+| Selector | Behavior |
+|---|---|
+| `new` | A fresh instance, all instance variables `nil`. |
+| `subclass:instanceVariableNames:` | Defines and answers a new subclass; binds its name as a global variable. |
+| `compile:` | Parses a String as method source and installs it, replacing any existing method with the same selector; answers `true`/`false`. |
+| `printString` | The class's own name, e.g. `Point printString` is `'Point'` (**not** `'a Point'` — this overrides the `Object` default). |
+
 ## Error handling
 
 There's no exception system. Every failure mode below prints a message to
@@ -215,10 +353,19 @@ without stopping the REPL:
 - Dividing a SmallInteger by zero: `error: division by zero`
 - Taking the `factorial` of a negative SmallInteger:
   `error: factorial of a negative number`
+- Using `self` or `super` outside a method body: `error: 'self' used
+  outside a method` (or `'super'`)
+- A malformed `compile:` argument: `error: compile: <message>`, and the
+  send answers `false` rather than `nil` (it's the one error case with a
+  meaningful non-nil failure value, since `compile:`'s normal success
+  value is also a Boolean)
 
 A genuine **parse** error (malformed syntax, not a runtime failure) prints
 `parse error: <message>` to stdout instead, and also just moves on to the
-next line.
+next line. This applies to expressions typed at the REPL; a parse error
+inside a `compile:` argument is the `error: compile: ...` stderr case
+above instead, since by then it's a runtime message send, not something
+the REPL's own reader rejected.
 
 ## Known limitations
 
@@ -230,19 +377,37 @@ Deliberate scope boundaries for this milestone, not bugs — tracked in
   SmallIntegers, with no overflow checking. Signed overflow is undefined
   behavior in C; in practice this compiler wraps around silently, but
   don't rely on that.
-- No reflection: no `class`, `isKindOf:`, `respondsTo:`, etc.
+- Reflection is minimal: `class` exists, but no `isKindOf:`,
+  `respondsTo:`, method introspection, or listing a class's instance
+  variables/methods from the language itself.
+- No real metaclass hierarchy: every class's `class` is the same `Class`
+  object (`Point class printString` is `'Class'`, not `'Point class'`),
+  and there's no way to define a class-side ("class method") selector —
+  `compile:` only ever installs an *instance*-side method.
+- No accessor generation: `subclass:instanceVariableNames:` doesn't create
+  getters/setters, you write `x  ^x` by hand via `compile:`.
+- Cascading directly off a bare `super` receiver (`super foo; bar`) loses
+  super-dispatch on every cascaded message after the first — a documented
+  gap, not planned to be fixed before blocks land and cascade parsing gets
+  revisited anyway.
+- `new` always allocates the plain instance-variable-array layout; don't
+  subclass `String`/`Symbol`/`SmallInteger` (see
+  [Defining classes and methods](#defining-classes-and-methods)).
 - No `==` (identity comparison) or `~=`/`~~` on anything.
 - No control flow at all: no `ifTrue:ifFalse:`, `and:`, `or:`,
-  `whileTrue:`, no blocks to build them from.
+  `whileTrue:`, no blocks to build them from — which also means a
+  recursive method has no way to terminate itself yet.
 - No collections (`Array`, `OrderedCollection`, `Dictionary`, ...).
-- No user-defined classes or methods — the six classes above are it.
-- No exceptions — every runtime error degrades to `nil` plus a stderr
-  message, as described above.
+- No exceptions — every runtime error degrades to `nil` (or `false` for
+  `compile:`) plus a stderr message, as described above.
 - Primitives generally don't type-check their arguments before using them
   (e.g. `SmallInteger>>+` assumes its argument is a SmallInteger); passing
   the wrong type doesn't reliably error, it just produces a nonsense
   result.
-- Variables are one flat global table for the whole process — no scoping.
+- Workspace variables (`x := ...` at the REPL) are one flat global table
+  for the whole process. Method arguments/temps *are* scoped to their own
+  activation now (see [Defining classes and methods](#defining-classes-and-methods)),
+  but there's still no block-local scoping, since there are no blocks.
 
 ## See also
 

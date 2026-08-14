@@ -59,26 +59,65 @@ st> 3 factorial; + 1; * 2 "cascade: all three sends target 3, not the previous r
 st> 3 printString
 ```
 
-## Milestone 3 — Class-definition syntax + user-defined methods 🚧
+## Milestone 3 — Class-definition syntax + user-defined methods ✅
 
 Define new classes and real Smalltalk-level methods (not just C
-primitives) from the REPL, with instance variables and accessors. This is
-the milestone where the language stops being "a calculator with objects"
-and starts being able to grow itself.
+primitives) from the REPL, with instance variables, `self`/`super`, and
+`^return`. This is the milestone where the language stops being "a
+calculator with objects" and starts being able to grow itself.
 
-Open design questions to resolve when this starts: class-definition syntax
-(a `subclass:instanceVariableNames:...` message in the classic style, vs.
-something simpler for a REPL), where compiled user methods live relative
-to the existing C-primitive `MethodEntry` table, and how `self`/`super`
-work in a tree-walking evaluator with no call-frame representation yet.
+Design questions from the original writeup, resolved:
+- **Class-definition syntax**: the classic `subclass:instanceVariableNames:`
+  keyword message, sent to any existing class. No `classVariableNames:` /
+  `package:` etc yet — a deliberately trimmed two-keyword version.
+- **Where compiled methods live**: `MethodEntry` now holds *either* a
+  primitive C function *or* a `CompiledMethod` (an AST-based body), tagged
+  by a `kind` field, in the same per-class array as before.
+- **Method definition syntax**: no multi-line REPL input yet, so methods
+  are installed via `Class>>compile: aString` — a String of Smalltalk
+  method source (pattern, optional `| temps |`, `.`-separated statements),
+  parsed by a new `parseMethod()`. Not the classic chunk-format `!`
+  syntax, but avoids extending the REPL's one-line-at-a-time input loop.
+- **`self`/`super` with no call-frame representation**: added one now — a
+  small `Activation` struct (self, args, temps, caller) that `eval.c`
+  threads through compiled-method calls; real recursion comes for free
+  from it being an ordinary (recursive) C call. `super` dispatches from
+  the *defining* method's class, not the receiver's actual class.
 
-**Try it (once built, syntax TBD):** something in the spirit of
+Also fell out of this milestone almost for free: `anObject class` (basic
+reflection — every class has a real, sendable class object now) and
+method redefinition-in-place (recompiling a selector replaces it, rather
+than silently shadowing the old definition behind it).
+
+Known gaps: no accessor auto-generation (write `x  ^x` by hand), no class-
+side (metaclass) methods, no real per-class metaclass (`Point class
+printString` is `'Class'` for every user class, not `'Point class'`), and
+cascading directly off a bare `super` receiver loses super-dispatch after
+the first message — see `CLAUDE.md` for the full list of deliberate
+simplifications.
+
+**Try it:**
 ```
 st> Object subclass: #Point instanceVariableNames: 'x y'
-st> Point new setX: 3 setY: 4; printString
+st> Point compile: 'setX: ax setY: ay  x := ax. y := ay. ^self'
+st> Point compile: 'x  ^x'
+st> Point compile: 'y  ^y'
+st> Point compile: '+ aPoint  ^Point new setX: x + aPoint x setY: y + aPoint y'
+st> p := Point new setX: 3 setY: 4
+st> q := Point new setX: 1 setY: 2
+st> (p + q) x
+st> p class printString      "'Point'"
+st> 3 class printString      "'SmallInteger' -- basic reflection"
+
+st> Object subclass: #Animal instanceVariableNames: 'name'
+st> Animal compile: 'setName: n  name := n. ^self'
+st> Animal compile: 'speak  ^name , '' makes a sound'''
+st> Animal subclass: #Dog instanceVariableNames: ''
+st> Dog compile: 'speak  ^super speak , ''! (woof)'''
+st> Dog new setName: 'Rex'; speak
 ```
 
-## Milestone 4 — Blocks/closures, control flow ⏳
+## Milestone 4 — Blocks/closures, control flow 🚧
 
 Block literals `[ ... ]`, closures over enclosing variables, non-local
 return, and `ifTrue:ifFalse:` / `whileTrue:` built *from* blocks rather

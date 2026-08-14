@@ -86,6 +86,14 @@ static AstNode *parsePrimary(Parser *p) {
             advance(p);
             return newNode(AST_FALSE_LITERAL);
         }
+        if (strcmp(p->current.text, "self") == 0) {
+            advance(p);
+            return newNode(AST_SELF);
+        }
+        if (strcmp(p->current.text, "super") == 0) {
+            advance(p);
+            return newNode(AST_SUPER);
+        }
         AstNode *n = newNode(AST_VARIABLE_REF);
         n->as.variableName = intern(p->current.text);
         advance(p);
@@ -297,4 +305,137 @@ AstNode *parseExpression(Parser *p) {
     }
 
     return parseCascade(p);
+}
+
+/* Is the current token the temp-declaration bar '|'? isBinaryChar() lets
+ * '|' start a multi-char binary token, so "||" (an empty temp list with no
+ * space between the bars) lexes as one TOK_BINARY token, not two -- both
+ * spellings are handled by the two call sites below. */
+static int atBar(Parser *p) {
+    return p->current.type == TOK_BINARY && strcmp(p->current.text, "|") == 0;
+}
+
+MethodNode *parseMethod(const char *src, char *errorMsg, size_t errorMsgSize) {
+    Parser p;
+    parserInit(&p, src);
+
+    MethodNode *m = calloc(1, sizeof(MethodNode));
+
+    /* --- pattern: unary, binary, or keyword --- */
+    if (p.current.type == TOK_IDENTIFIER) {
+        m->selector = intern(p.current.text);
+        advance(&p);
+    } else if (p.current.type == TOK_BINARY) {
+        m->selector = intern(p.current.text);
+        advance(&p);
+        if (p.current.type != TOK_IDENTIFIER) {
+            snprintf(errorMsg, errorMsgSize, "expected a parameter name after binary selector");
+            free(m);
+            return NULL;
+        }
+        m->argNames = malloc(sizeof(char *));
+        m->argNames[0] = (char *)intern(p.current.text);
+        m->argCount = 1;
+        advance(&p);
+    } else if (p.current.type == TOK_KEYWORD) {
+        char combined[256];
+        combined[0] = '\0';
+        char **argNames = NULL;
+        int argCount = 0, argCapacity = 0;
+        while (p.current.type == TOK_KEYWORD) {
+            strncat(combined, p.current.text, sizeof(combined) - strlen(combined) - 1);
+            advance(&p);
+            if (p.current.type != TOK_IDENTIFIER) {
+                snprintf(errorMsg, errorMsgSize, "expected a parameter name after keyword");
+                free(argNames);
+                free(m);
+                return NULL;
+            }
+            if (argCount == argCapacity) {
+                argCapacity = argCapacity ? argCapacity * 2 : 4;
+                argNames = realloc(argNames, sizeof(char *) * argCapacity);
+            }
+            argNames[argCount++] = (char *)intern(p.current.text);
+            advance(&p);
+        }
+        m->selector = intern(combined);
+        m->argNames = argNames;
+        m->argCount = argCount;
+    } else {
+        snprintf(errorMsg, errorMsgSize, "expected a method pattern");
+        free(m);
+        return NULL;
+    }
+
+    /* --- optional "| temp1 temp2 |" --- */
+    if (atBar(&p)) {
+        advance(&p);
+        char **tempNames = NULL;
+        int tempCount = 0, tempCapacity = 0;
+        while (p.current.type == TOK_IDENTIFIER) {
+            if (tempCount == tempCapacity) {
+                tempCapacity = tempCapacity ? tempCapacity * 2 : 4;
+                tempNames = realloc(tempNames, sizeof(char *) * tempCapacity);
+            }
+            tempNames[tempCount++] = (char *)intern(p.current.text);
+            advance(&p);
+        }
+        if (!atBar(&p)) {
+            snprintf(errorMsg, errorMsgSize, "expected closing '|' after temp declarations");
+            free(tempNames);
+            free(m);
+            return NULL;
+        }
+        advance(&p);
+        m->tempNames = tempNames;
+        m->tempCount = tempCount;
+    } else if (p.current.type == TOK_BINARY && strcmp(p.current.text, "||") == 0) {
+        /* "||" with no space: an empty temp list, one token. */
+        advance(&p);
+    }
+
+    /* --- statement sequence --- */
+    AstNode **stmts = NULL;
+    int stmtCount = 0, stmtCapacity = 0;
+    while (p.current.type != TOK_EOF) {
+        AstNode *stmt;
+        if (p.current.type == TOK_CARET) {
+            advance(&p);
+            AstNode *value = parseExpression(&p);
+            if (!value) {
+                snprintf(errorMsg, errorMsgSize, "%s", p.errorMsg);
+                free(m);
+                return NULL;
+            }
+            stmt = newNode(AST_RETURN);
+            stmt->as.returnValue = value;
+        } else {
+            stmt = parseExpression(&p);
+            if (!stmt) {
+                snprintf(errorMsg, errorMsgSize, "%s", p.errorMsg);
+                free(m);
+                return NULL;
+            }
+        }
+        if (stmtCount == stmtCapacity) {
+            stmtCapacity = stmtCapacity ? stmtCapacity * 2 : 8;
+            stmts = realloc(stmts, sizeof(AstNode *) * stmtCapacity);
+        }
+        stmts[stmtCount++] = stmt;
+
+        if (p.current.type == TOK_DOT) {
+            advance(&p);
+            continue;
+        }
+        break;
+    }
+    if (p.current.type != TOK_EOF) {
+        snprintf(errorMsg, errorMsgSize, "unexpected token after statement");
+        free(m);
+        return NULL;
+    }
+
+    m->statements = stmts;
+    m->statementCount = stmtCount;
+    return m;
 }

@@ -10,6 +10,7 @@ typedef enum {
     TOK_SYMBOL,    /* #foo, #at:put:, or #+ */
     TOK_ASSIGN,    /* := */
     TOK_SEMICOLON, /* ; (cascade separator) */
+    TOK_CARET,     /* ^ (method return, only meaningful in method bodies) */
     TOK_LPAREN,
     TOK_RPAREN,
     TOK_DOT,

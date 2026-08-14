@@ -132,6 +132,69 @@ static void testPrintString(void) {
     printf("testPrintString passed\n");
 }
 
+static void testUserDefinedClasses(void) {
+    evalString("Object subclass: #Point instanceVariableNames: 'x y'");
+    assert(evalString("Point compile: 'setX: ax setY: ay  x := ax. y := ay. ^self'") == trueObject);
+    assert(evalString("Point compile: 'x  ^x'") == trueObject);
+    assert(evalString("Point compile: 'y  ^y'") == trueObject);
+    assert(evalString("Point compile: '+ aPoint  ^Point new setX: x + aPoint x setY: y + aPoint y'") ==
+           trueObject);
+
+    /* A fresh instance's instance variables start out nil, not garbage. */
+    assert(evalString("Point new x") == nilObject);
+
+    evalString("p := Point new setX: 3 setY: 4");
+    assert(smallIntegerValue(evalString("p x")) == 3);
+    assert(smallIntegerValue(evalString("p y")) == 4);
+
+    evalString("q := Point new setX: 1 setY: 2");
+    assert(smallIntegerValue(evalString("(p + q) x")) == 4);
+    assert(smallIntegerValue(evalString("(p + q) y")) == 6);
+
+    /* Two instances don't share storage. */
+    evalString("q setX: 100 setY: 200");
+    assert(smallIntegerValue(evalString("p x")) == 3);
+    assert(smallIntegerValue(evalString("q x")) == 100);
+
+    printf("testUserDefinedClasses passed\n");
+}
+
+static void testSuperAndInheritance(void) {
+    evalString("Object subclass: #Animal instanceVariableNames: 'name'");
+    evalString("Animal compile: 'setName: n  name := n. ^self'");
+    evalString("Animal compile: 'speak  ^name , '' makes a sound'''");
+    evalString("Animal subclass: #Dog instanceVariableNames: ''");
+    evalString("Dog compile: 'speak  ^super speak , ''! (woof)'''");
+
+    evalString("d := Dog new setName: 'Rex'");
+    oop said = evalString("d speak");
+    assert(strcmp(((StringObject *)said)->bytes, "Rex makes a sound! (woof)") == 0);
+
+    printf("testSuperAndInheritance passed\n");
+}
+
+static void testMethodRedefinition(void) {
+    evalString("Object subclass: #Counter instanceVariableNames: ''");
+    evalString("Counter compile: 'value  ^1'");
+    assert(smallIntegerValue(evalString("Counter new value")) == 1);
+
+    /* Recompiling the same selector replaces it in place -- lookupMethod's
+     * front-to-back scan must not keep finding a stale first copy. */
+    evalString("Counter compile: 'value  ^2'");
+    assert(smallIntegerValue(evalString("Counter new value")) == 2);
+
+    printf("testMethodRedefinition passed\n");
+}
+
+static void testReflection(void) {
+    assert(strcmp(((StringObject *)evalString("3 class printString"))->bytes, "SmallInteger") == 0);
+    assert(strcmp(((StringObject *)evalString("nil class printString"))->bytes, "UndefinedObject") == 0);
+    assert(strcmp(((StringObject *)evalString("Object printString"))->bytes, "Object") == 0);
+    assert(strcmp(((StringObject *)evalString("Object class printString"))->bytes, "Class") == 0);
+
+    printf("testReflection passed\n");
+}
+
 /* Regression test: the REPL reuses one fixed line buffer across inputs.
  * isBinaryChar() used to treat '\0' as a valid selector character (since
  * strchr(set, '\0') always "matches" the set's own terminator), so lexing
@@ -168,6 +231,10 @@ int main(void) {
     testStringsAndSymbols();
     testCascade();
     testPrintString();
+    testUserDefinedClasses();
+    testSuperAndInheritance();
+    testMethodRedefinition();
+    testReflection();
 
     printf("All tests passed.\n");
     return 0;

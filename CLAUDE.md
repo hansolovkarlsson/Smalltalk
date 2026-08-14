@@ -5,9 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A from-scratch Smalltalk interpreter/VM, written in C, built incrementally.
-Currently at **Milestone 2**: variables, `String`/`Symbol` as real objects,
-`#printString`, and cascades layered on top of Milestone 1's object model
-and message dispatch — still not a bytecode VM yet (see Roadmap below).
+Currently at **Milestone 3**: user-defined classes and compiled
+Smalltalk-level methods (instance variables, `self`/`super`, `^return`),
+layered on top of Milestone 2's variables/String/Symbol/printString/cascades
+and Milestone 1's object model and message dispatch — still not a bytecode
+VM yet (see Roadmap below).
 
 ## Commands
 
@@ -60,16 +62,45 @@ casting.
 **Classes** (`class.h`/`class.c`): `STClass` (named to avoid colliding with
 the Objective-C runtime's `Class`/`class` on macOS — headers here get
 parsed as Objective-C++ by some tooling) is a plain C struct, *not* a heap
-`Object` — there's no metaclass yet. Each class has a small array of
-`{selector, primitive C function}` pairs; `lookupMethod()` walks
-`superclass` chain doing **pointer-equality** comparison on selectors. This
-only works because selectors are always interned first. Bootstrapped
-classes: `Object`, `UndefinedObject`, `Boolean`/`True`/`False`,
-`SmallInteger`, `String`, `Symbol` — no numeric tower (`Magnitude`/`Number`)
-yet, no user-defined classes or methods. `Symbol` is **not** a subclass of
-`String` (real Smalltalk makes it one) because their C layouts differ; it's
-its own direct subclass of `Object`, a deliberate simplification noted in
-`class.c`.
+`Object` — there's still no real metaclass hierarchy. Each class has a
+growable array of `MethodEntry { selector; kind; fn | compiled; }` — a
+method is either a primitive C function or a `CompiledMethod` (an AST-based
+body installed by `Class>>compile:`, see below); `lookupMethod()` walks the
+`superclass` chain doing **pointer-equality** comparison on selectors, so
+selectors reaching it must be interned first. `findOrAddSlot()` in
+`class.c` makes `compile:` (and `classAddPrimitive`) replace an existing
+selector's entry in place rather than appending a shadowed duplicate —
+matters because redefining a method while iterating at the REPL is the
+common case, and `lookupMethod()`'s front-to-back scan would otherwise keep
+finding the stale first copy forever.
+
+A class still needs to be a valid message receiver (`Point new`, `Object
+subclass: #Point instanceVariableNames: 'x y'`), so every `STClass` owns
+one `ClassObject { isa; thisClass; }` wrapper (`cls->classOop`) that *is* a
+real heap oop — `isa` is always `ClassClass`, a bootstrapped class carrying
+the `new`/`subclass:instanceVariableNames:`/`compile:`/`printString`
+primitives (`primitives.c`). `registerClass()` creates this wrapper and
+also binds the class's name as a global variable (`environment.c`), which
+is *the entire mechanism* by which a bare identifier like `Point` resolves
+to something sendable — no separate "system dictionary" exists. `classOf()`
+on a `ClassObject` returns `ClassClass`, so `Point class printString` is
+`'Class'` for every user class alike — there's no per-class metaclass, a
+deliberate simplification (real Smalltalk would answer `'Point class'`).
+
+Bootstrapped classes: `Object`, `UndefinedObject`, `Boolean`/`True`/`False`,
+`SmallInteger`, `String`, `Symbol`, `Class` — no numeric tower
+(`Magnitude`/`Number`) yet. `Symbol` is **not** a subclass of `String` (real
+Smalltalk makes it one) because their C layouts differ; it's its own direct
+subclass of `Object`, a deliberate simplification noted in `class.c`. User
+classes defined via `subclass:instanceVariableNames:` (`defineSubclass()`)
+should descend from `Object`, not from `String`/`Symbol`/`SmallInteger`/etc
+— `new`/`instantiate()` always allocates the plain `Object { isa;
+fields[]; }` layout regardless of superclass, so subclassing a
+special-layout class wouldn't preserve that class's real representation.
+Each `STClass` carries its own *cumulative* `instanceVarNames`/
+`instanceVarCount` (superclass's names first, then its own appended) so a
+field index computed against any class in a chain stays valid for every
+subclass.
 
 **Selector interning** (`symbol.h`/`symbol.c`): a simple linear-scan intern
 table (`intern()`), plus a parallel table of lazily-created `SymbolObject`s
@@ -87,7 +118,51 @@ index through a stale pointer.
 `{interned name -> oop}` bindings for the REPL's workspace. `x := expr`
 auto-declares `x` if it isn't already bound (see `AST_ASSIGNMENT` in
 `eval.c`); referencing an unbound name is a non-fatal error (prints to
-stderr, evaluates to `nil`), same pattern as an unhandled selector.
+stderr, evaluates to `nil`), same pattern as an unhandled selector. This is
+also where user-defined classes live: `registerClass()` calls `envSet()` on
+the class's name, so `Point` resolves through the exact same lookup path as
+any workspace variable — no separate global/system namespace.
+
+**Compiled methods and activations** (`eval.c`): `Class>>compile:`
+(`primitives.c`) parses a method source string with `parseMethod()`
+(`parser.c`) into a `MethodNode` (pattern + optional `| temps |` + a
+`.`-separated statement list, any statement of which may be `^expr`), then
+wraps it in a `CompiledMethod` (`class.h`) and installs it via
+`classAddCompiledMethod()`. Dispatch (`dispatchFrom()`/`sendMessage()` in
+`eval.c`) checks `MethodEntry.kind`: primitives call straight through as
+before, compiled methods go through `invokeCompiledMethod()`, which builds
+a stack-allocated `Activation { self; homeClass; argNames/argValues;
+tempNames/tempValues; caller; }`, points the file-static `currentActivation`
+at it, runs the statement list, and restores the caller's activation
+afterward — real recursion falls out of this being an ordinary C call
+inside `eval()`, no explicit call stack needed. A statement list with no
+`^` returns `self` by default (real Smalltalk semantics, *not* the last
+statement's value); `^` only ever appears as a top-level statement (the
+method grammar has no way to nest one inside another expression), so
+"returning" is just "stop the statement loop here" — no non-local-return
+machinery (blocks don't exist yet, so there's nothing to return non-locally
+*out of* besides the method itself).
+
+**Variable resolution inside a method body** (`activationLookup()`/
+`activationStore()` in `eval.c`): for `AST_VARIABLE_REF`/`AST_ASSIGNMENT`,
+check the current activation's args, then temps, then `self`'s class's
+instance variables (`classOf(currentActivation->self)`, so subclass
+overrides still see the right indices — layouts are cumulative, see
+above), falling back to the global environment only if none of those match.
+`self`/`super` are dedicated `AST_SELF`/`AST_SUPER` node types (recognized
+in `parsePrimary()` alongside `nil`/`true`/`false`), not ordinary variable
+refs — both evaluate to `currentActivation->self`, but a message *sent to*
+a literal `super` receiver dispatches differently: `AST_UNARY_SEND`/
+`AST_BINARY_SEND`/`AST_KEYWORD_SEND` in `eval.c` each check whether their
+receiver sub-node is `AST_SUPER` and, if so, call `dispatchFrom()` starting
+at `currentActivation->homeClass->superclass` (the class the *running*
+method was compiled into, not `classOf(self)`) instead of going through
+plain `sendMessage()`. Known gap: cascading directly off a bare `super`
+receiver (`super foo; bar`) loses super-ness on every cascaded send after
+the first, since `decomposeSend()`/`AST_CASCADE` evaluate the receiver once
+via plain `eval()` and dispatch every cascaded message with ordinary
+`sendMessage()` — documented inline at the `AST_CASCADE` case rather than
+threading super-dispatch through cascade rewriting too.
 
 **Grammar/precedence** (`parser.c`): standard Smalltalk precedence — unary
 sends bind tightest and chain left-to-right, then binary sends (all equal
@@ -117,9 +192,15 @@ why `tests/test_main.c`'s regression test for it explicitly reuses one
 buffer across two `parserInit()` calls rather than using two separate C
 string literals.
 
-`nil`/`true`/`false` remain literal pseudo-variables recognized directly by
-`parsePrimary()` (not stored in the variable environment); any other bare
-identifier parses as `AST_VARIABLE_REF` and is resolved at eval time.
+`nil`/`true`/`false`/`self`/`super` remain literal pseudo-variables
+recognized directly by `parsePrimary()` (not stored in the variable
+environment); any other bare identifier parses as `AST_VARIABLE_REF` and is
+resolved at eval time. `parseMethod()` (`parser.c`) is a second, separate
+top-level entry point alongside `parseExpression()` — it doesn't parse a
+normal expression at all, but a method's pattern/temps/statement-list
+grammar, reusing `parseExpression()` only for each individual statement (or
+each `^`-prefixed one, `TOK_CARET` being the one token `parseExpression()`
+itself never consumes).
 
 ## Roadmap
 

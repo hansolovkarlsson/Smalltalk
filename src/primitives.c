@@ -1,4 +1,5 @@
 #include "class.h"
+#include "parser.h"
 #include "stringobj.h"
 #include "symbol.h"
 
@@ -198,6 +199,92 @@ static oop prim_symbol_asString(oop receiver, oop *args, int argc) {
     return makeString(symbolName(receiver));
 }
 
+/* Any object's class, e.g. `3 class` -> SmallInteger. classOop is set for
+ * every STClass (bootstrap or user-defined) by class.c's registerClass(),
+ * so this is total. */
+static oop prim_object_class(oop receiver, oop *args, int argc) {
+    (void)args;
+    (void)argc;
+    return classOf(receiver)->classOop;
+}
+
+static oop prim_class_new(oop receiver, oop *args, int argc) {
+    (void)args;
+    (void)argc;
+    return instantiate(((ClassObject *)receiver)->thisClass);
+}
+
+static oop prim_class_printString(oop receiver, oop *args, int argc) {
+    (void)args;
+    (void)argc;
+    return makeString(((ClassObject *)receiver)->thisClass->name);
+}
+
+/* Object subclass: #Point instanceVariableNames: 'x y'
+ * args[0] is expected to be a Symbol (the new class's name), args[1] a
+ * String of space-separated instance variable names. Neither is
+ * type-checked before casting, matching this codebase's existing
+ * primitive convention (see CLAUDE.md). */
+static oop prim_class_subclass_instanceVariableNames(oop receiver, oop *args, int argc) {
+    (void)argc;
+    STClass *super = ((ClassObject *)receiver)->thisClass;
+    const char *className = symbolName(args[0]);
+    StringObject *ivarStr = (StringObject *)args[1];
+
+    char *copy = malloc((size_t)ivarStr->length + 1);
+    memcpy(copy, ivarStr->bytes, (size_t)ivarStr->length);
+    copy[ivarStr->length] = '\0';
+
+    char **names = NULL;
+    int count = 0, capacity = 0;
+    char *tok = strtok(copy, " \t");
+    while (tok) {
+        if (count == capacity) {
+            capacity = capacity ? capacity * 2 : 4;
+            names = realloc(names, sizeof(char *) * capacity);
+        }
+        names[count++] = (char *)intern(tok);
+        tok = strtok(NULL, " \t");
+    }
+    free(copy);
+
+    STClass *cls = defineSubclass(super, className, names, count);
+    free(names);
+    return cls->classOop;
+}
+
+/* Point compile: 'setX: ax setY: ay  x := ax. y := ay. ^self'
+ * Parses args[0] (a String) as a method (see parser.c's parseMethod()) and
+ * installs it on the receiver class, replacing any existing method with
+ * the same selector. Answers true on success, false (and a stderr
+ * message) on a parse error -- mirroring this codebase's "errors degrade
+ * to a value plus stderr, not an exception" convention. */
+static oop prim_class_compile(oop receiver, oop *args, int argc) {
+    (void)argc;
+    STClass *cls = ((ClassObject *)receiver)->thisClass;
+    StringObject *src = (StringObject *)args[0];
+
+    char errorMsg[256];
+    MethodNode *m = parseMethod(src->bytes, errorMsg, sizeof(errorMsg));
+    if (!m) {
+        fprintf(stderr, "error: compile: %s\n", errorMsg);
+        return falseObject;
+    }
+
+    CompiledMethod *cm = malloc(sizeof(CompiledMethod));
+    cm->argNames = m->argNames;
+    cm->argCount = m->argCount;
+    cm->tempNames = m->tempNames;
+    cm->tempCount = m->tempCount;
+    cm->statements = m->statements;
+    cm->statementCount = m->statementCount;
+    cm->homeClass = cls;
+
+    classAddCompiledMethod(cls, m->selector, cm);
+    free(m);
+    return trueObject;
+}
+
 void installPrimitives(void) {
     classAddPrimitive(SmallIntegerClass, "+", prim_add);
     classAddPrimitive(SmallIntegerClass, "-", prim_sub);
@@ -213,6 +300,7 @@ void installPrimitives(void) {
     classAddPrimitive(SmallIntegerClass, "printString", prim_smallint_printString);
 
     classAddPrimitive(ObjectClass, "printString", prim_object_printString);
+    classAddPrimitive(ObjectClass, "class", prim_object_class);
     classAddPrimitive(UndefinedObjectClass, "printString", prim_nil_printString);
     classAddPrimitive(TrueClass, "printString", prim_true_printString);
     classAddPrimitive(FalseClass, "printString", prim_false_printString);
@@ -224,4 +312,10 @@ void installPrimitives(void) {
 
     classAddPrimitive(SymbolClass, "printString", prim_symbol_printString);
     classAddPrimitive(SymbolClass, "asString", prim_symbol_asString);
+
+    classAddPrimitive(ClassClass, "new", prim_class_new);
+    classAddPrimitive(ClassClass, "printString", prim_class_printString);
+    classAddPrimitive(ClassClass, "subclass:instanceVariableNames:",
+                       prim_class_subclass_instanceVariableNames);
+    classAddPrimitive(ClassClass, "compile:", prim_class_compile);
 }
