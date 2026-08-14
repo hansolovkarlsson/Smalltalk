@@ -9,7 +9,7 @@ memory.
 ## Running it
 
 ```
-$ make && ./smalltalk
+$ make && ./bin/smalltalk
 st> 3 + 4 factorial
 27
 st> quit
@@ -416,7 +416,7 @@ Deliberate scope boundaries for this milestone, not bugs — tracked in
   milestone.
 - `../CLAUDE.md` — internal architecture: object representation, dispatch,
   parser structure, and notable bugs already fixed.
-- `../examples/` — fuller, runnable programs (`./smalltalk
+- `../examples/` — fuller, runnable programs (`./bin/smalltalk
   examples/point.st`, or `make examples` to check them all at once);
   narrated in `../examples/README.md` since the language has no comment
   syntax of its own.

@@ -4,7 +4,7 @@ Runnable demonstrations of what the interpreter can do, one topic per
 file. Run one directly:
 
 ```
-$ make && ./smalltalk examples/point.st
+$ make && ./bin/smalltalk examples/point.st
 ```
 
 or check them all at once (fails the build if any of them produces an

@@ -13,11 +13,11 @@ milestone yourself.
 - `make test` — the growing assert-based regression suite
   (`tests/test_main.c`). Every milestone's new syntax/primitives get a test
   here; run this after pulling any change.
-- `make && ./smalltalk` — the REPL, for manual/interactive testing. Each
+- `make && ./bin/smalltalk` — the REPL, for manual/interactive testing. Each
   milestone below lists example expressions you can paste in directly.
 - `quit` or `exit` (or Ctrl-D) leaves the REPL.
 - `make examples` — runs every file in `../examples/` (also runnable one
-  at a time: `./smalltalk examples/point.st`) and fails if any of them
+  at a time: `./bin/smalltalk examples/point.st`) and fails if any of them
   errors. Bigger, narrated demonstrations than the inline snippets below —
   see `../examples/README.md`.
 
@@ -33,7 +33,7 @@ evaluator, and a REPL.
 
 **Try it:**
 ```
-$ make && ./smalltalk
+$ make && ./bin/smalltalk
 st> 3 + 4 factorial
 st> 10 factorial
 st> 3 < 4

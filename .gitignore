@@ -1,4 +1,3 @@
-smalltalk
-run_tests
+bin/
 *.o
 *.dSYM/
