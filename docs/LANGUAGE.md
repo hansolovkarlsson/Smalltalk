@@ -1,10 +1,17 @@
 # Language Reference
 
-What the interpreter actually accepts and does right now — Milestone 5.
+What the interpreter actually accepts and does right now — Milestone 6.
 This documents observable REPL behavior, not internals; see `../CLAUDE.md`
 for how it's implemented and `ROADMAP.md` for what's coming next. Every
 example below was run against the built interpreter, not written from
 memory.
+
+Milestone 6 replaced the evaluator internals (a bytecode compiler and VM
+dispatch loop now run compiled methods/blocks, instead of walking the
+parsed syntax tree directly) without changing the language itself at all
+— every example in this document, and every behavior it describes, is
+unaffected. See `../CLAUDE.md` for that rewrite; nothing below changed
+because of it.
 
 ## Running it
 

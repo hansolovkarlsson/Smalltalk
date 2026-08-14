@@ -9,6 +9,15 @@ struct Activation;
 /* selector must be an interned string (see symbol.h) -- method lookup
  * compares selectors by pointer identity. */
 oop sendMessage(oop receiver, const char *selector, oop *args, int argc);
+
+/* Evaluates one top-level expression (a parsed REPL line). Despite the
+ * name and unchanged signature, this no longer walks the AST directly as
+ * of Milestone 6 -- it compiles node with compiler.c's
+ * compileTopLevelExpression() and runs the result on eval.c's own
+ * bytecode dispatch loop (vmRun()), the same path a compiled method or
+ * block body goes through. Kept as `eval()` rather than renamed so
+ * main.c and tests/test_main.c's evalString() needed zero changes when
+ * the internals were replaced. */
 oop eval(AstNode *node);
 
 /* The activation of whatever's currently executing (NULL if nothing is --

@@ -9,29 +9,23 @@
  * how to trace and (for GC_KIND_ACTIVATION) how to free it. Oops
  * self-describe their concrete layout via `isa` once you know they ARE an
  * oop (see gc.c's gcMarkOop()), so this only needs to distinguish "an oop"
- * from "an Activation" (activation.h) from "an oop[] array" -- the two
- * heap-allocated things in this VM that aren't themselves a tagged oop but
- * still need tracing/freeing.
+ * from "an Activation" (activation.h), the one heap-allocated thing in
+ * this VM that isn't itself a tagged oop but still needs tracing/freeing.
  *
- * GC_KIND_OOP_ARRAY exists for exactly one reason: a message send's
- * evaluated arguments (built in eval.c's AST_KEYWORD_SEND/AST_CASCADE,
- * since a keyword selector's arity isn't known until parse time, unlike a
- * binary send's fixed-size on-stack `oop args[1]`). That array is handed
- * down into a primitive as a plain `oop *`, and some primitives
- * (Block>>whileTrue:/whileFalse:) hold onto an argument from it across
- * many nested calls that can each trigger a collection. If the array were
- * plain malloc'd, none of gcMarkOop()'s roots (env, symbols, the
- * activation chain) would ever reach into it, and conservative stack
- * scanning only checks whether a stack word IS a live GCHeader's payload
- * address -- it doesn't dereference that payload looking for further
- * oops inside it. Tagging the array itself as GC_KIND_OOP_ARRAY closes
- * that gap: scanning finds the primitive's own `oop *args` parameter
- * (an ordinary stack-resident local/parameter) pointing at the array,
- * recognizes its kind, and marks every oop inside it too -- see gc.c's
- * markCandidate(). This was a real, initially-missed bug (see CLAUDE.md):
- * `[cond] whileTrue: [body]` could have its `body` block collected out
- * from under the loop after enough iterations, corrupting memory. */
-typedef enum { GC_KIND_OOP, GC_KIND_ACTIVATION, GC_KIND_OOP_ARRAY } GCKind;
+ * A third kind, GC_KIND_OOP_ARRAY, existed through Milestone 5 for message-
+ * send argument arrays, which back then were separately malloc'd (eval.c's
+ * old AST_KEYWORD_SEND/AST_CASCADE) and reachable only via conservative
+ * scanning -- which finds a stack word that IS a live header's address,
+ * but never dereferences into what that header's payload contains looking
+ * for further oops. A primitive like Block>>whileTrue: holding onto an
+ * argument across many loop iterations could have it collected out from
+ * under a still-running loop as a result (a real, initially-missed bug,
+ * see CLAUDE.md's Milestone 5 history). Milestone 6's bytecode VM (eval.c's
+ * vmRun()) obsoletes this by construction: OP_SEND's args are a slice of
+ * vmRun()'s own C-local operand stack, not a separate heap allocation, so
+ * conservative scanning already sees their contents directly, the same
+ * way it always saw an ordinary stack-resident local or parameter. */
+typedef enum { GC_KIND_OOP, GC_KIND_ACTIVATION } GCKind;
 
 /* Call once, as early as possible in main() -- before bootstrapClasses()
  * or anything else can allocate -- passing the address of a local

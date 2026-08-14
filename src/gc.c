@@ -159,20 +159,6 @@ static void headerSetFree(HeaderSet *set) {
     free(set->slots);
 }
 
-/* See gc.h's GC_KIND_OOP_ARRAY doc comment: an evaluated message-send
- * argument list, only ever reachable via conservative scanning (never a
- * precise root), which is why marking it happens here rather than
- * alongside gcMarkOop()/gcMarkActivation(). */
-static void gcMarkOopArray(GCHeader *h) {
-    if (h->marked) return;
-    h->marked = 1;
-    oop *elems = (oop *)PAYLOAD_OF(h);
-    size_t n = h->size / sizeof(oop);
-    for (size_t i = 0; i < n; i++) {
-        gcMarkOop(elems[i]);
-    }
-}
-
 static void markCandidate(void *candidate, HeaderSet *set) {
     uintptr_t addr = (uintptr_t)candidate;
     if (addr == 0 || (addr & 1) != 0) return; /* tag bit set -> a SmallInteger, never a real pointer */
@@ -180,8 +166,6 @@ static void markCandidate(void *candidate, HeaderSet *set) {
     if (!headerSetContains(set, h)) return; /* just some non-pointer bit pattern */
     if (h->kind == GC_KIND_ACTIVATION) {
         gcMarkActivation((Activation *)candidate);
-    } else if (h->kind == GC_KIND_OOP_ARRAY) {
-        gcMarkOopArray(h);
     } else {
         gcMarkOop((oop)candidate);
     }

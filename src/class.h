@@ -1,24 +1,25 @@
 #ifndef CLASS_H
 #define CLASS_H
 
-#include "ast.h"
+#include "bytecode.h"
 #include "object.h"
 
 typedef oop (*PrimitiveFn)(oop receiver, oop *args, int argc);
 
 typedef enum { METHOD_PRIMITIVE, METHOD_COMPILED } MethodKind;
 
-/* An AST-based method body installed by Class>>compile: (see primitives.c
- * and parser.c's parseMethod()). homeClass is the class it was compiled
- * into, which is where a "super" send inside it starts superclass lookup
- * -- not classOf(receiver), which may be a subclass. */
+/* A method body installed by Class>>compile: (see primitives.c, which
+ * parses the source with parser.c's parseMethod() and then compiles the
+ * resulting statement list to bytecode with compiler.c's
+ * compileMethodBody()). homeClass is the class it was compiled into,
+ * which is where a "super" send inside it starts superclass lookup --
+ * not classOf(receiver), which may be a subclass. */
 typedef struct CompiledMethod {
     char **argNames; /* interned, argCount entries */
     int argCount;
     char **tempNames; /* interned, tempCount entries */
     int tempCount;
-    AstNode **statements;
-    int statementCount;
+    CompiledCode *code;
     struct STClass *homeClass;
 } CompiledMethod;
 

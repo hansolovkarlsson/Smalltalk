@@ -1,4 +1,5 @@
 #include "class.h"
+#include "compiler.h"
 #include "eval.h"
 #include "parser.h"
 #include "stringobj.h"
@@ -277,8 +278,7 @@ static oop prim_class_compile(oop receiver, oop *args, int argc) {
     cm->argCount = m->argCount;
     cm->tempNames = m->tempNames;
     cm->tempCount = m->tempCount;
-    cm->statements = m->statements;
-    cm->statementCount = m->statementCount;
+    cm->code = compileMethodBody(m->statements, m->statementCount);
     cm->homeClass = cls;
 
     classAddCompiledMethod(cls, m->selector, cm);

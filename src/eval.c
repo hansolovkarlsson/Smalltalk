@@ -2,6 +2,7 @@
 #include "activation.h"
 #include "block.h"
 #include "class.h"
+#include "compiler.h"
 #include "environment.h"
 #include "gc.h"
 #include "stringobj.h"
@@ -18,13 +19,11 @@
  * invoked long after the activation that created it would otherwise have
  * returned -- e.g. stored in a variable and called later, or returned as
  * the method's result. A stack-local Activation (as before blocks
- * existed) would dangle in exactly that case; an unmanaged malloc'd one
- * (as before garbage collection existed) would never be reclaimed even
- * once truly unreachable. gc.c traces one via its own copy of this
- * struct's layout (activation.h) -- see gcMarkActivation() there, and
- * markRoots()'s use of evalCurrentActivation() below for how the
- * in-progress call chain becomes a root without scanning the C stack for
- * it specifically.
+ * existed) would dangle in exactly that case. gc.c traces one via its own
+ * copy of this struct's layout (activation.h) -- see gcMarkActivation()
+ * there, and markRoots()'s use of evalCurrentActivation() below for how
+ * the in-progress call chain becomes a root without scanning the C stack
+ * for it specifically.
  *
  * lexicalParent is the closure chain: the activation that was current when
  * this one's code was *written* (for a method activation, always NULL --
@@ -35,7 +34,7 @@
  * enclosing method's args/temps/self.
  *
  * homeMethodActivation is the *dynamic* return target for a non-local '^'
- * (see runStatementSequence()): the nearest lexically enclosing METHOD
+ * (see vmRun()'s OP_RETURN): the nearest lexically enclosing METHOD
  * activation, found by walking lexicalParent all the way up. For a method
  * activation it's always itself. caller is unrelated to either of these --
  * it's the ordinary dynamic call chain (who invoked this activation),
@@ -63,121 +62,6 @@ static oop dispatchFrom(STClass *startClass, oop receiver, const char *selector,
 
 oop sendMessage(oop receiver, const char *selector, oop *args, int argc) {
     return dispatchFrom(classOf(receiver), receiver, selector, args, argc);
-}
-
-/* Runs a '.'-separated statement list shared by both a compiled method's
- * body and a block's body (invokeCompiledMethod()/invokeBlock() below).
- * They differ only in what "falling off the end without a '^'" answers:
- * a method answers self (defaultValue, ignoring the last statement's
- * value); a block answers its last statement's value (useLastAsDefault),
- * or nil if it has none. A '^' always means "return from the nearest
- * lexically enclosing method", never "return from this block" -- so
- * every '^', even one written directly in a method's own top-level
- * statement list, unwinds via longjmp to that method's own setjmp() in
- * invokeCompiledMethod(). Jumping to your own immediately-enclosing frame
- * this way is legal C and means '^' needs no separate "am I already at
- * the right frame?" fast path. */
-static oop runStatementSequence(AstNode **stmts, int count, oop defaultValue, int useLastAsDefault) {
-    oop result = defaultValue;
-    for (int i = 0; i < count; i++) {
-        AstNode *stmt = stmts[i];
-        if (stmt->type == AST_RETURN) {
-            oop value = eval(stmt->as.returnValue);
-            Activation *home = currentActivation->homeMethodActivation;
-            if (!home) {
-                fprintf(stderr, "error: '^' used outside a method\n");
-                return value;
-            }
-            home->returnValue = value;
-            longjmp(home->returnPoint, 1);
-        }
-        oop value = eval(stmt);
-        if (useLastAsDefault) result = value;
-    }
-    return result;
-}
-
-/* Args arrive positionally from the send site (AST_*_SEND below), so argc
- * there always matches cm->argCount: the selector's arity is baked into
- * its shape (unary/binary/N-keyword) by construction, and lookupMethod()
- * matched on that same selector. Copies args/temps into the activation's
- * own storage rather than aliasing the caller's buffer -- the caller's
- * buffer (e.g. AST_KEYWORD_SEND's local `args`) is freed or goes out of
- * scope right after this call returns, but a block created in this method
- * body that captures this activation can outlive that. */
-static oop invokeCompiledMethod(CompiledMethod *cm, oop receiver, oop *args) {
-    /* gcAlloc() zero-initializes, so act is a safe (all-NULL/0) target for
-     * gcMarkActivation() even in the narrow window before every field
-     * below is set -- not that anything here currently triggers a nested
-     * collection in that window (only plain malloc() calls follow, not
-     * gcAlloc()), but future edits shouldn't have to reason about it. */
-    Activation *act = gcAlloc(GC_KIND_ACTIVATION, sizeof(Activation));
-    act->self = receiver;
-    act->homeClass = cm->homeClass;
-    act->argNames = cm->argNames;
-    act->argCount = cm->argCount;
-    act->argValues = NULL;
-    if (act->argCount > 0) {
-        act->argValues = malloc(sizeof(oop) * (size_t)act->argCount);
-        memcpy(act->argValues, args, sizeof(oop) * (size_t)act->argCount);
-    }
-    act->tempNames = cm->tempNames;
-    act->tempCount = cm->tempCount;
-    act->tempValues = NULL;
-    if (act->tempCount > 0) {
-        act->tempValues = malloc(sizeof(oop) * (size_t)act->tempCount);
-        for (int i = 0; i < act->tempCount; i++) act->tempValues[i] = nilObject;
-    }
-    act->lexicalParent = NULL; /* methods aren't lexically nested */
-    act->homeMethodActivation = act;
-    act->caller = currentActivation;
-    currentActivation = act;
-
-    oop result;
-    if (setjmp(act->returnPoint) == 0) {
-        result = runStatementSequence(cm->statements, cm->statementCount, receiver, 0);
-    } else {
-        result = act->returnValue; /* landed here via a '^' inside this method or a block it made */
-    }
-
-    currentActivation = act->caller;
-    return result;
-}
-
-oop invokeBlock(oop blockOop, oop *args, int argc) {
-    BlockObject *blk = (BlockObject *)blockOop;
-    if (argc != blk->paramCount) {
-        fprintf(stderr, "error: wrong number of block arguments (expected %d, got %d)\n", blk->paramCount,
-                argc);
-        return nilObject;
-    }
-
-    Activation *frame = gcAlloc(GC_KIND_ACTIVATION, sizeof(Activation));
-    frame->self = blk->homeActivation ? blk->homeActivation->self : nilObject;
-    frame->homeClass = NULL; /* not a method activation; see homeMethodActivation */
-    frame->argNames = blk->paramNames;
-    frame->argCount = blk->paramCount;
-    frame->argValues = NULL;
-    if (frame->argCount > 0) {
-        frame->argValues = malloc(sizeof(oop) * (size_t)frame->argCount);
-        memcpy(frame->argValues, args, sizeof(oop) * (size_t)frame->argCount);
-    }
-    frame->tempNames = NULL;
-    frame->tempCount = 0;
-    frame->tempValues = NULL;
-    frame->lexicalParent = blk->homeActivation;
-    frame->homeMethodActivation = blk->homeActivation ? blk->homeActivation->homeMethodActivation : NULL;
-    frame->caller = currentActivation;
-    currentActivation = frame;
-
-    oop result = runStatementSequence(blk->statements, blk->statementCount, nilObject, 1);
-
-    currentActivation = frame->caller;
-    return result;
-}
-
-static int isSuperNode(AstNode *node) {
-    return node->type == AST_SUPER;
 }
 
 /* The class a `super` send inside whatever's currently running should
@@ -252,144 +136,239 @@ static int activationStore(const char *name, oop value) {
     return 0;
 }
 
-oop eval(AstNode *node) {
-    switch (node->type) {
-        case AST_INT_LITERAL:
-            return makeSmallInteger(node->as.intValue);
-        case AST_NIL_LITERAL:
-            return nilObject;
-        case AST_TRUE_LITERAL:
-            return trueObject;
-        case AST_FALSE_LITERAL:
-            return falseObject;
-        case AST_STRING_LITERAL:
-            return makeString(node->as.stringValue);
-        case AST_SYMBOL_LITERAL:
-            return internSymbol(node->as.symbolName);
-        case AST_SELF:
-        case AST_SUPER:
-            if (currentActivation) return currentActivation->self;
-            fprintf(stderr, "error: '%s' used outside a method\n",
-                    node->type == AST_SELF ? "self" : "super");
-            return nilObject;
-        case AST_RETURN:
-            /* Only meaningful as a top-level statement in a method or
-             * block body, handled directly by runStatementSequence();
-             * reached here only if '^' appeared somewhere nested, which
-             * the grammar never produces. Fall back to just evaluating it. */
-            return eval(node->as.returnValue);
-        case AST_BLOCK_LITERAL: {
-            BlockObject *blk = gcAlloc(GC_KIND_OOP, sizeof(BlockObject));
-            blk->isa = BlockClass;
-            blk->paramNames = node->as.blockLiteral.paramNames;
-            blk->paramCount = node->as.blockLiteral.paramCount;
-            blk->statements = node->as.blockLiteral.statements;
-            blk->statementCount = node->as.blockLiteral.statementCount;
-            blk->homeActivation = currentActivation; /* the entire closure mechanism */
-            return (oop)blk;
-        }
-        case AST_VARIABLE_REF: {
-            oop value;
-            if (activationLookup(node->as.variableName, &value)) {
-                return value;
+/* Generous headroom for how deep a single expression's evaluation can
+ * nest sends/cascade args before spilling values onto this stack -- no
+ * realistic Smalltalk source (including every method/block this project
+ * has ever compiled) comes remotely close. A bounds check keeps a
+ * pathological case a graceful stderr-and-nil error (this codebase's
+ * usual convention) instead of silently corrupting memory past the array. */
+#define VM_STACK_MAX 1024
+
+/* The dispatch loop: fetches one Instr at a time from a CompiledCode
+ * (bytecode.h) and executes it against an explicit operand stack, in
+ * place of what used to be eval()'s recursive AST walk. `stack` is a
+ * plain C local array, which is what makes it automatically visible to
+ * gc.c's conservative stack scanning for as long as this call (and any
+ * nested vmRun() calls it triggers via OP_SEND) remains on the C call
+ * stack -- exactly the same mechanism that already covered eval()'s old
+ * `oop receiver = eval(...)`-style locals, no new GC design needed. This
+ * is also why message-send arguments no longer need the GC_KIND_OOP_ARRAY
+ * treatment gc.c used to require (see CLAUDE.md): OP_SEND's args point
+ * directly into this stack-resident array, not a separately heap-malloc'd
+ * buffer a conservative scan can't see the contents of. */
+static oop vmRun(CompiledCode *code) {
+    oop stack[VM_STACK_MAX];
+    int sp = 0;
+
+/* Only used at push sites: SEND/SEND_SUPER/POP/STORE_VAR never grow sp
+ * (SEND/SEND_SUPER pop more than they push, POP shrinks, STORE_VAR only
+ * peeks), so only the handful of opcodes that actually push a new value
+ * need the bounds check at all. */
+#define VM_PUSH(value)                                                            \
+    do {                                                                          \
+        if (sp >= VM_STACK_MAX) {                                                 \
+            fprintf(stderr, "error: expression too complex (VM stack overflow)\n"); \
+            return nilObject;                                                     \
+        }                                                                         \
+        stack[sp++] = (value);                                                    \
+    } while (0)
+
+    for (int pc = 0; pc < code->count; pc++) {
+        Instr *ins = &code->instrs[pc];
+
+        switch (ins->op) {
+            case OP_PUSH_LITERAL:
+                VM_PUSH(ins->operand.literal);
+                break;
+            case OP_PUSH_STRING_LITERAL:
+                VM_PUSH(makeString(ins->operand.stringValue));
+                break;
+            case OP_PUSH_SYMBOL_LITERAL:
+                VM_PUSH(internSymbol(ins->operand.symbolName));
+                break;
+            case OP_PUSH_NIL:
+                VM_PUSH(nilObject);
+                break;
+            case OP_PUSH_TRUE:
+                VM_PUSH(trueObject);
+                break;
+            case OP_PUSH_FALSE:
+                VM_PUSH(falseObject);
+                break;
+            case OP_PUSH_SELF:
+                if (currentActivation) {
+                    VM_PUSH(currentActivation->self);
+                } else {
+                    fprintf(stderr, "error: 'self' used outside a method\n");
+                    VM_PUSH(nilObject);
+                }
+                break;
+            case OP_PUSH_VAR: {
+                oop value;
+                if (activationLookup(ins->operand.varName, &value)) {
+                    VM_PUSH(value);
+                } else if (envLookup(ins->operand.varName, &value)) {
+                    VM_PUSH(value);
+                } else {
+                    fprintf(stderr, "error: undefined variable '%s'\n", ins->operand.varName);
+                    VM_PUSH(nilObject);
+                }
+                break;
             }
-            if (envLookup(node->as.variableName, &value)) {
-                return value;
+            case OP_STORE_VAR: {
+                oop value = stack[sp - 1]; /* peek: assignment is an expression, its value stays on TOS */
+                if (!activationStore(ins->operand.varName, value)) {
+                    envSet(ins->operand.varName, value);
+                }
+                break;
             }
-            fprintf(stderr, "error: undefined variable '%s'\n", node->as.variableName);
-            return nilObject;
-        }
-        case AST_ASSIGNMENT: {
-            oop value = eval(node->as.assignment.value);
-            if (!activationStore(node->as.assignment.name, value)) {
-                envSet(node->as.assignment.name, value);
+            case OP_PUSH_BLOCK: {
+                BlockTemplate *tmpl = ins->operand.block;
+                BlockObject *blk = gcAlloc(GC_KIND_OOP, sizeof(BlockObject));
+                blk->isa = BlockClass;
+                blk->paramNames = tmpl->paramNames;
+                blk->paramCount = tmpl->paramCount;
+                blk->code = tmpl->code;
+                blk->homeActivation = currentActivation; /* the entire closure mechanism */
+                VM_PUSH((oop)blk);
+                break;
             }
-            return value;
-        }
-        case AST_UNARY_SEND: {
-            AstNode *recvNode = node->as.unarySend.receiver;
-            if (isSuperNode(recvNode)) {
+            case OP_SEND: {
+                int argc = ins->operand.send.argc;
+                oop *args = &stack[sp - argc];
+                oop receiver = stack[sp - argc - 1];
+                oop result = sendMessage(receiver, ins->operand.send.selector, args, argc);
+                sp -= (argc + 1);
+                stack[sp++] = result;
+                break;
+            }
+            case OP_SEND_SUPER: {
+                int argc = ins->operand.send.argc;
+                oop *args = &stack[sp - argc];
                 STClass *start = currentSuperclass();
+                oop result;
                 if (!start) {
                     fprintf(stderr, "error: 'super' used outside a method\n");
-                    return nilObject;
+                    result = nilObject;
+                } else {
+                    result = dispatchFrom(start, currentActivation->self, ins->operand.send.selector, args,
+                                           argc);
                 }
-                return dispatchFrom(start, currentActivation->self, node->as.unarySend.selector, NULL, 0);
+                sp -= argc;
+                stack[sp++] = result;
+                break;
             }
-            oop receiver = eval(recvNode);
-            return sendMessage(receiver, node->as.unarySend.selector, NULL, 0);
-        }
-        case AST_BINARY_SEND: {
-            AstNode *recvNode = node->as.binarySend.receiver;
-            oop arg = eval(node->as.binarySend.arg);
-            oop args[1];
-            args[0] = arg;
-            if (isSuperNode(recvNode)) {
-                STClass *start = currentSuperclass();
-                if (!start) {
-                    fprintf(stderr, "error: 'super' used outside a method\n");
-                    return nilObject;
+            case OP_POP:
+                sp--;
+                break;
+            case OP_DUP: {
+                /* Not VM_PUSH(stack[sp - 1]) directly: that macro-expands
+                 * to stack[sp++] = (stack[sp - 1]), reading and modifying
+                 * sp with no sequence point between them -- undefined
+                 * behavior, caught by the compiler. */
+                oop top = stack[sp - 1];
+                VM_PUSH(top);
+                break;
+            }
+            case OP_RETURN: {
+                oop value = stack[sp - 1];
+                Activation *home = currentActivation ? currentActivation->homeMethodActivation : NULL;
+                if (!home) {
+                    fprintf(stderr, "error: '^' used outside a method\n");
+                    return value;
                 }
-                return dispatchFrom(start, currentActivation->self, node->as.binarySend.selector, args, 1);
+                home->returnValue = value;
+                longjmp(home->returnPoint, 1);
             }
-            oop receiver = eval(recvNode);
-            return sendMessage(receiver, node->as.binarySend.selector, args, 1);
-        }
-        case AST_KEYWORD_SEND: {
-            AstNode *recvNode = node->as.keywordSend.receiver;
-            int argc = node->as.keywordSend.argCount;
-            /* GC_KIND_OOP_ARRAY, not a plain malloc: a primitive can hold
-             * onto this args pointer across several nested calls that may
-             * each trigger a collection (Block>>whileTrue:/whileFalse:
-             * re-reading args[0] every iteration) -- see gc.h's doc
-             * comment on GC_KIND_OOP_ARRAY for the bug this fixes. Never
-             * manually freed for the same reason a BlockObject's fields
-             * aren't: gcAlloc'd memory is only ever reclaimed by a
-             * collection once unreachable. */
-            oop *args = gcAlloc(GC_KIND_OOP_ARRAY, sizeof(oop) * (size_t)argc);
-            for (int i = 0; i < argc; i++) {
-                args[i] = eval(node->as.keywordSend.args[i]);
-            }
-            oop result;
-            if (isSuperNode(recvNode)) {
-                STClass *start = currentSuperclass();
-                if (!start) {
-                    fprintf(stderr, "error: 'super' used outside a method\n");
-                    return nilObject;
-                }
-                result = dispatchFrom(start, currentActivation->self, node->as.keywordSend.selector, args,
-                                       argc);
-            } else {
-                oop receiver = eval(recvNode);
-                result = sendMessage(receiver, node->as.keywordSend.selector, args, argc);
-            }
-            return result;
-        }
-        case AST_CASCADE: {
-            /* Limitation: if the cascade's receiver expression is literally
-             * `super` (e.g. "super foo; bar"), eval(AST_SUPER) below still
-             * yields self's value, but every cascaded message is then sent
-             * via plain sendMessage() (classOf(self)-based), not super's
-             * superclass-starting lookup -- cascading directly off `super`
-             * is rare enough that this narrow gap is left as a known
-             * simplification rather than threading super-dispatch through
-             * decomposeSend()'s cascade rewriting too. */
-            oop receiver = eval(node->as.cascade.receiver);
-            oop result = receiver;
-            for (int i = 0; i < node->as.cascade.messageCount; i++) {
-                CascadeMessage *m = &node->as.cascade.messages[i];
-                oop *args = NULL;
-                if (m->argCount > 0) {
-                    /* See the AST_KEYWORD_SEND case above: GC_KIND_OOP_ARRAY, not malloc. */
-                    args = gcAlloc(GC_KIND_OOP_ARRAY, sizeof(oop) * (size_t)m->argCount);
-                    for (int j = 0; j < m->argCount; j++) {
-                        args[j] = eval(m->args[j]);
-                    }
-                }
-                result = sendMessage(receiver, m->selector, args, m->argCount);
-            }
-            return result;
         }
     }
-    return nilObject;
+
+    return sp > 0 ? stack[sp - 1] : nilObject;
+
+#undef VM_PUSH
+}
+
+oop eval(AstNode *node) {
+    CompiledCode *code = compileTopLevelExpression(node);
+    return vmRun(code);
+}
+
+/* Args arrive positionally from the send site (OP_SEND/OP_SEND_SUPER
+ * above), so argc there always matches cm->argCount: the selector's
+ * arity is baked into its shape (unary/binary/N-keyword) by construction,
+ * and lookupMethod() matched on that same selector. Copies args/temps
+ * into the activation's own storage rather than aliasing the caller's
+ * buffer -- the caller's buffer is a slice of *its own* vmRun() operand
+ * stack, which stays perfectly valid for the duration of this call (it's
+ * still on the C stack), but a block created in this method body that
+ * captures this activation can outlive that caller entirely. */
+static oop invokeCompiledMethod(CompiledMethod *cm, oop receiver, oop *args) {
+    /* gcAlloc() zero-initializes, so act is a safe (all-NULL/0) target for
+     * gcMarkActivation() even in the narrow window before every field
+     * below is set -- not that anything here currently triggers a nested
+     * collection in that window (only plain malloc() calls follow, not
+     * gcAlloc()), but future edits shouldn't have to reason about it. */
+    Activation *act = gcAlloc(GC_KIND_ACTIVATION, sizeof(Activation));
+    act->self = receiver;
+    act->homeClass = cm->homeClass;
+    act->argNames = cm->argNames;
+    act->argCount = cm->argCount;
+    act->argValues = NULL;
+    if (act->argCount > 0) {
+        act->argValues = malloc(sizeof(oop) * (size_t)act->argCount);
+        memcpy(act->argValues, args, sizeof(oop) * (size_t)act->argCount);
+    }
+    act->tempNames = cm->tempNames;
+    act->tempCount = cm->tempCount;
+    act->tempValues = NULL;
+    if (act->tempCount > 0) {
+        act->tempValues = malloc(sizeof(oop) * (size_t)act->tempCount);
+        for (int i = 0; i < act->tempCount; i++) act->tempValues[i] = nilObject;
+    }
+    act->lexicalParent = NULL; /* methods aren't lexically nested */
+    act->homeMethodActivation = act;
+    act->caller = currentActivation;
+    currentActivation = act;
+
+    oop result;
+    if (setjmp(act->returnPoint) == 0) {
+        result = vmRun(cm->code);
+    } else {
+        result = act->returnValue; /* landed here via a '^' inside this method or a block it made */
+    }
+
+    currentActivation = act->caller;
+    return result;
+}
+
+oop invokeBlock(oop blockOop, oop *args, int argc) {
+    BlockObject *blk = (BlockObject *)blockOop;
+    if (argc != blk->paramCount) {
+        fprintf(stderr, "error: wrong number of block arguments (expected %d, got %d)\n", blk->paramCount,
+                argc);
+        return nilObject;
+    }
+
+    Activation *frame = gcAlloc(GC_KIND_ACTIVATION, sizeof(Activation));
+    frame->self = blk->homeActivation ? blk->homeActivation->self : nilObject;
+    frame->homeClass = NULL; /* not a method activation; see homeMethodActivation */
+    frame->argNames = blk->paramNames;
+    frame->argCount = blk->paramCount;
+    frame->argValues = NULL;
+    if (frame->argCount > 0) {
+        frame->argValues = malloc(sizeof(oop) * (size_t)frame->argCount);
+        memcpy(frame->argValues, args, sizeof(oop) * (size_t)frame->argCount);
+    }
+    frame->tempNames = NULL;
+    frame->tempCount = 0;
+    frame->tempValues = NULL;
+    frame->lexicalParent = blk->homeActivation;
+    frame->homeMethodActivation = blk->homeActivation ? blk->homeActivation->homeMethodActivation : NULL;
+    frame->caller = currentActivation;
+    currentActivation = frame;
+
+    oop result = vmRun(blk->code);
+
+    currentActivation = frame->caller;
+    return result;
 }

@@ -241,9 +241,64 @@ second regardless of iteration count, memory usage stays bounded, and
 touched by anything inside it — still answers correctly afterward,
 proving the collector didn't free something still reachable.
 
-## Milestone 6 — Bytecode compiler + VM dispatch loop ⏳
+## Milestone 6 — Bytecode compiler + VM dispatch loop ✅
 
-Replace the tree-walking evaluator with a bytecode compiler and a
+Replaced the tree-walking evaluator with a bytecode compiler and a
 dispatch-loop interpreter over compiled methods — this is the point where
 it becomes a "real" VM in the classic Smalltalk-80 sense, per the
-project's original goal.
+project's original goal, and the last milestone on the original roadmap.
+
+Parsing is completely unchanged (`parser.c` still builds the same
+`AstNode` tree as always) — what changed is what happens to that tree
+next. Before, `eval()` walked it directly, every single time a method or
+block ran. Now, a new `compiler.c` walks it *once* per method/block body,
+emitting a flat instruction sequence (`bytecode.h`'s `CompiledCode`); a
+new dispatch loop in `eval.c` (`vmRun()`) then executes that instruction
+sequence against an explicit operand stack, calling back into
+`sendMessage()` at each send exactly like before. A recompiled method
+(`compile:` on an existing selector, always supported since Milestone 3)
+replaces its `CompiledCode` the same way it always replaced its AST.
+
+The genuinely interesting design problem wasn't the bytecode format
+itself, but making sure Milestone 5's garbage collector kept working
+without a redesign: the VM's operand stack is a plain C-local array inside
+`vmRun()`, which means it's automatically visible to the *same*
+conservative stack-scanning mechanism already built for the tree-walking
+evaluator's own C locals — no new GC work needed for the rewrite itself.
+It also turned out to *simplify* the collector: Milestone 5's
+`GC_KIND_OOP_ARRAY` (a fix for message-send arguments that used to live in
+a separately heap-allocated buffer conservative scanning couldn't see
+into) became unnecessary and was removed, since `OP_SEND`'s arguments now
+point directly into that same stack-resident operand stack. See
+`CLAUDE.md` for the full mechanism, including why String/Symbol literals
+are deliberately *not* precomputed at compile time (a `gcAlloc`'d object
+embedded in permanent, untraced bytecode would be invisible to the
+collector the moment compilation finished).
+
+Every existing test (23, none rewritten — same language, new engine) and
+example passed unchanged once the rewrite compiled, on the first attempt,
+which is itself worth noting: keeping `sendMessage()`/`Activation`/
+closures/non-local-return completely untouched and *only* replacing how a
+method or block's own statement list gets executed kept this large a
+rewrite from touching the parts already proven correct in Milestones 3-5.
+Re-verified under the same ASan+UBSan process from Milestone 5, including
+the exact `whileTrue:`-plus-live-closure stress scenario that found a real
+bug there.
+
+Known simplification, left for the future: variables are still resolved
+dynamically by name at every `OP_PUSH_VAR`/`OP_STORE_VAR` (the same
+interned-pointer-equality lookup the tree-walking evaluator always used),
+not by a compile-time-computed slot index the way a fully "real" bytecode
+VM's variable access typically works. That's a legitimate, separable
+further optimization — this milestone's scope was the compile-and-dispatch
+architecture itself, not also rebuilding variable resolution around it.
+
+**Try it:** there's no new surface syntax — every existing program behaves
+identically, just runs measurably faster on repeated execution (a method
+or block's body is compiled once, not re-walked on every call):
+
+```
+st> Object subclass: #Fib instanceVariableNames: ''
+st> Fib compile: 'fib: n  n < 2 ifTrue: [^n]. ^(self fib: n - 1) + (self fib: n - 2)'
+st> Fib new fib: 24          "46368 -- ~150,000 recursive sends, still instant"
+```
