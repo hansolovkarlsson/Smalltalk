@@ -17,6 +17,10 @@ VM yet (see Roadmap below).
 - `make test` — build and run `tests/test_main.c` (assert-based, no external
   framework). Always run this after touching `src/`.
 - `make clean` — remove build artifacts (including macOS `.dSYM` bundles).
+- `make examples` — runs every `examples/*.st` file and fails if any of
+  them errors; also runnable individually (`./smalltalk examples/point.st`)
+  since `main()` accepts an optional filename argument, reading from that
+  file instead of stdin.
 - `./smalltalk` — run the REPL. Type an expression (e.g. `3 + 4 factorial`,
   `x := 'hello' , ' world'`) and press enter; `quit` or `exit` to leave.
 

@@ -16,6 +16,10 @@ milestone yourself.
 - `make && ./smalltalk` — the REPL, for manual/interactive testing. Each
   milestone below lists example expressions you can paste in directly.
 - `quit` or `exit` (or Ctrl-D) leaves the REPL.
+- `make examples` — runs every file in `examples/` (also runnable one at a
+  time: `./smalltalk examples/point.st`) and fails if any of them errors.
+  Bigger, narrated demonstrations than the inline snippets below — see
+  `examples/README.md`.
 
 ## Milestone 1 — Core object model, message dispatch, REPL ✅
 
@@ -116,6 +120,10 @@ st> Animal subclass: #Dog instanceVariableNames: ''
 st> Dog compile: 'speak  ^super speak , ''! (woof)'''
 st> Dog new setName: 'Rex'; speak
 ```
+
+Fuller, runnable versions of both of the above (plus a third, `Counter`,
+showing instance-variable mutation and cascades together) live in
+`examples/point.st` and `examples/animals.st` — see `examples/README.md`.
 
 ## Milestone 4 — Blocks/closures, control flow 🚧
 

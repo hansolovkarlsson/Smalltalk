@@ -415,3 +415,6 @@ Deliberate scope boundaries for this milestone, not bugs — tracked in
   milestone.
 - `CLAUDE.md` — internal architecture: object representation, dispatch,
   parser structure, and notable bugs already fixed.
+- `examples/` — fuller, runnable programs (`./smalltalk examples/point.st`,
+  or `make examples` to check them all at once); narrated in
+  `examples/README.md` since the language has no comment syntax of its own.

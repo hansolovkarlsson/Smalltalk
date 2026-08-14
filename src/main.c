@@ -14,8 +14,23 @@ static void printResult(oop result) {
     printf("%s\n", ((StringObject *)str)->bytes);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     bootstrapClasses();
+
+    /* With a filename argument, read from that file instead of stdin --
+     * lets an example .st file (see examples/) run as `./smalltalk
+     * examples/point.st`, not just `./smalltalk < examples/point.st`.
+     * Otherwise identical to the interactive REPL: same one-expression-
+     * per-line loop, same "st> "-prefixed transcript, so a captured run
+     * of an example file reads exactly like a "Try it" doc snippet. */
+    FILE *input = stdin;
+    if (argc > 1) {
+        input = fopen(argv[1], "r");
+        if (!input) {
+            fprintf(stderr, "error: couldn't open '%s'\n", argv[1]);
+            return 1;
+        }
+    }
 
     printf("Smalltalk REPL (milestone 3). Type an expression, or 'quit' to exit.\n");
 
@@ -24,7 +39,7 @@ int main(void) {
         printf("st> ");
         fflush(stdout);
 
-        if (!fgets(line, sizeof(line), stdin)) {
+        if (!fgets(line, sizeof(line), input)) {
             printf("\n");
             break;
         }
@@ -49,5 +64,6 @@ int main(void) {
         printResult(result);
     }
 
+    if (input != stdin) fclose(input);
     return 0;
 }
