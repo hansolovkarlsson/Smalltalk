@@ -621,6 +621,9 @@ Deliberate scope boundaries for this milestone, not bugs — tracked in
 
 ## See also
 
+- `TUTORIAL.md` — a beginner's guided walkthrough, if you're new to this
+  interpreter (or Smalltalk itself); this document is the complete
+  reference once you're past the basics.
 - `ROADMAP.md` — milestone plan and progress, with REPL examples per
   milestone.
 - `../CLAUDE.md` — internal architecture: object representation, dispatch,

@@ -302,3 +302,36 @@ st> Object subclass: #Fib instanceVariableNames: ''
 st> Fib compile: 'fib: n  n < 2 ifTrue: [^n]. ^(self fib: n - 1) + (self fib: n - 2)'
 st> Fib new fib: 24          "46368 -- ~150,000 recursive sends, still instant"
 ```
+
+## Beyond the original roadmap
+
+The original six milestones are complete. No specific one of the below is
+committed to yet — listed roughly easiest-to-hardest as candidates for
+whichever gets picked up next.
+
+### Collections (e.g. `Array`) ⏳
+
+Likely the easiest of the three: the object model already supports
+variable-length field storage (`Object { isa; fields[]; }`), so a basic
+indexable `Array` mostly needs `at:`/`at:put:`/`size` primitives plus a
+`new:` allocator sized at creation time — no new heap layout or VM
+architecture required.
+
+### Numeric tower (`Float`, mixed-type arithmetic) ⏳
+
+Moderate difficulty: needs a new heap layout for `Float` (SmallInteger's
+tagged-pointer trick doesn't extend to it), plus coercion rules so
+`SmallInteger`/`Float` arithmetic mixes correctly. Contained mostly to
+`primitives.c` and a new object layout, without touching the compiler or
+GC's structure.
+
+### Compile-time-resolved variable access ⏳
+
+The hardest of the three, and the one explicitly flagged as a known
+simplification in Milestone 6: `OP_PUSH_VAR`/`OP_STORE_VAR` still resolve
+names dynamically at runtime (interned-pointer lookup walking the
+`lexicalParent` chain) rather than through compile-time-computed slot
+indices. Doing this properly means `compiler.c` tracking a full lexical
+scope model — which names are the current frame's own args/temps vs. an
+outer block's vs. an instance variable vs. global — at compile time, which
+touches the compiler's core structure more deeply than either of the above.
