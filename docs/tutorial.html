@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial — Smalltalk</title>
+<meta name="description" content="A beginner's guided walkthrough of this Smalltalk interpreter: arithmetic, strings, variables, blocks, classes, and loops, run against the real REPL.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="mark">st&gt;</span> Smalltalk</a>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="tutorial.html" class="current">Tutorial</a>
+      <a href="https://github.com/hansolovkarlsson/Smalltalk/blob/main/docs/LANGUAGE.md">Language reference</a>
+      <a href="https://github.com/hansolovkarlsson/Smalltalk/tree/main/examples">Examples</a>
+      <a href="https://github.com/hansolovkarlsson/Smalltalk">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <h1 style="margin:2.5rem 0 0.3rem; font-size:2rem; letter-spacing:-0.02em;">Beginner's tutorial</h1>
+  <p class="tut-intro">
+    A guided, hands-on walkthrough for someone who has never used this
+    interpreter — or Smalltalk — before. It builds up from arithmetic to
+    defining your own classes, one small step at a time. Every transcript
+    below was run against the built interpreter, not typed from memory —
+    follow along and you'll get exactly this output. For the complete,
+    precise rules once you're past the basics, see the
+    <a href="https://github.com/hansolovkarlsson/Smalltalk/blob/main/docs/LANGUAGE.md">language reference</a>.
+  </p>
+
+  <div class="tut-layout">
+    <aside class="tut-toc">
+      <h4>Contents</h4>
+      <ol>
+        <li><a href="#repl">1. Starting the REPL</a></li>
+        <li><a href="#numbers">2. Numbers &amp; arithmetic</a></li>
+        <li><a href="#messages">3. Everything's a message</a></li>
+        <li><a href="#strings">4. Strings</a></li>
+        <li><a href="#variables">5. Variables</a></li>
+        <li><a href="#conditionals">6. Conditionals</a></li>
+        <li><a href="#blocks">7. Blocks</a></li>
+        <li><a href="#class">8. Your first class</a></li>
+        <li><a href="#counter">9. A Counter</a></li>
+        <li><a href="#loops">10. Loops</a></li>
+        <li><a href="#next">11. Where next</a></li>
+      </ol>
+    </aside>
+
+    <div class="tut-content">
+
+      <h2 id="repl">1. Starting the REPL</h2>
+      <pre class="term"><code><span class="p">$ </span>make
+<span class="p">$ </span>./bin/smalltalk
+Smalltalk REPL (milestone 6). Type an expression, or 'quit' to exit.
+st&gt;</code></pre>
+      <p>
+        You get a <code>st&gt;</code> prompt. Type one expression, press
+        enter, see the result. Type <code>quit</code> (or <code>exit</code>,
+        or Ctrl-D) to leave.
+      </p>
+      <p>
+        <strong>Important habit to build right away: one expression per
+        line.</strong> This interpreter reads and evaluates a single
+        expression from each line you type — it does not (yet) let you
+        chain several statements together with <code>.</code> on one line.
+        Get used to pressing enter after every single thing you want
+        evaluated.
+      </p>
+
+      <h2 id="numbers">2. Numbers and arithmetic</h2>
+      <pre class="term"><code><span class="p">st&gt; </span>3 + 4
+7
+<span class="p">st&gt; </span>2 + 3 * 4
+20</code></pre>
+      <p>
+        That second one surprises everyone coming from most other
+        languages: there's no <code>*</code>-before-<code>+</code>
+        precedence in Smalltalk. Arithmetic operators (<code>+ - * /</code>)
+        are just messages sent to objects, all at the same precedence,
+        evaluated strictly left to right — <code>2 + 3 * 4</code> is
+        <code>(2 + 3) * 4</code>, not <code>2 + (3 * 4)</code>. Use
+        parentheses when you mean the other grouping:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>2 + (3 * 4)
+14</code></pre>
+      <p>
+        <code>/</code> is integer division (it truncates, like C, not exact
+        fraction division):
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>7 / 2
+3</code></pre>
+      <p>
+        Numbers understand more than just arithmetic —
+        <code>factorial</code>, for example:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>3 factorial
+6
+<span class="p">st&gt; </span>5 factorial + 1
+121</code></pre>
+      <p>
+        <code>factorial</code> here is a <strong>unary message</strong> — a
+        message with no arguments, written by just following the receiver
+        with a word. Unary messages bind tighter than anything else, which
+        is why <code>5 factorial + 1</code> is <code>(5 factorial) + 1</code>
+        — there's no ambiguity once you know the rule: unary tightest, then
+        binary (<code>+ - * /</code> etc, left to right, one precedence
+        level), then keyword messages (lowest — more on those soon).
+      </p>
+
+      <h2 id="messages">3. Everything is a message send</h2>
+      <p>
+        This is the one idea that unlocks the rest of Smalltalk:
+        <strong>there is no special syntax for operations</strong> —
+        <code>3 + 4</code> is not "the <code>+</code> operator applied to
+        <code>3</code> and <code>4</code>," it is the message
+        <code>+</code> sent to the object <code>3</code> with the argument
+        <code>4</code>. <code>3 factorial</code> is the message
+        <code>factorial</code> sent to <code>3</code>. Later, when you write
+        your own classes, your own methods are invoked exactly the same way,
+        with exactly the same rules. There's no separate "operator" concept
+        to learn.
+      </p>
+
+      <h2 id="strings">4. Strings</h2>
+      <pre class="term"><code><span class="p">st&gt; </span>'hello'
+'hello'
+<span class="p">st&gt; </span>'hello' , ' world'
+'hello world'
+<span class="p">st&gt; </span>'hello' size
+5</code></pre>
+      <p>
+        <code>,</code> is the concatenation message (yes, <code>,</code> is
+        a valid binary selector, same precedence tier as <code>+</code>).
+        Strings are single-quoted; to get a literal quote inside one,
+        double it:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>'it''s a test'
+'it''s a test'</code></pre>
+
+      <h2 id="variables">5. Variables</h2>
+      <pre class="term"><code><span class="p">st&gt; </span>x := 10
+10
+<span class="p">st&gt; </span>y := 20
+20
+<span class="p">st&gt; </span>x + y
+30
+<span class="p">st&gt; </span>x
+10</code></pre>
+      <p>
+        <code>:=</code> assigns. You don't declare a variable ahead of
+        time — assigning to a name you haven't used yet creates it. These
+        variables live for the whole REPL session (they're not scoped to
+        anything), so <code>x</code> and <code>y</code> are still around for
+        the rest of this walkthrough.
+      </p>
+
+      <h2 id="conditionals">6. <code>true</code>, <code>false</code>, and conditionals</h2>
+      <pre class="term"><code><span class="p">st&gt; </span>3 &gt; 2
+true
+<span class="p">st&gt; </span>3 &gt; 2 ifTrue: ['bigger'] ifFalse: ['smaller']
+'bigger'</code></pre>
+      <p>
+        <code>ifTrue:ifFalse:</code> is a <strong>keyword message</strong> —
+        the lowest-precedence kind, written as one or more <code>word:</code>
+        parts each immediately followed by an argument. Here the whole
+        selector is <code>ifTrue:ifFalse:</code>, sent to <code>3 &gt; 2</code>
+        (itself a binary send, evaluated first since keyword sends bind
+        loosest), with two arguments: the blocks <code>['bigger']</code> and
+        <code>['smaller']</code>.
+      </p>
+      <p>Which brings us to blocks.</p>
+
+      <h2 id="blocks">7. Blocks</h2>
+      <p>
+        A block is a chunk of code you can pass around and run later —
+        written in square brackets:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>[3 + 4] value
+7</code></pre>
+      <p>
+        <code>[3 + 4]</code> builds the block (it does <em>not</em> run
+        yet); <code>value</code> is the message that actually runs it. A
+        block can take parameters, declared with a leading colon and
+        separated from the body by <code>|</code>:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>[:a :b | a * b] value: 6 value: 7
+42</code></pre>
+      <p>
+        You just saw why <code>ifTrue:ifFalse:</code> needs blocks, not
+        plain expressions, as its arguments: only one branch should ever
+        actually run, and wrapping each branch in <code>[...]</code> is what
+        lets <code>ifTrue:ifFalse:</code> decide which one to evaluate (via
+        <code>value</code>) instead of both being evaluated up front the way
+        ordinary arguments would be.
+      </p>
+
+      <h2 id="class">8. Defining your first class</h2>
+      <p>
+        Classes are created by sending a message to an existing class —
+        usually <code>Object</code>, the root of everything:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>Object subclass: #Greeter instanceVariableNames: 'greeting'
+Greeter</code></pre>
+      <p>
+        This defines a new class named <code>Greeter</code> (the name comes
+        from the <strong>Symbol</strong> literal <code>#Greeter</code> — a
+        Symbol is just an interned, quoteless identifier-like literal,
+        commonly used for names) with one instance variable,
+        <code>greeting</code>. <code>Greeter</code> is immediately usable,
+        the same way any variable you assign is usable.
+      </p>
+      <p>
+        Now give it some behavior. There's no multi-line class-body syntax
+        here — each method is installed separately by sending
+        <code>compile:</code> a string of Smalltalk source:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>Greeter compile: 'setGreeting: g  greeting := g. ^self'
+true
+<span class="p">st&gt; </span>Greeter compile: 'greet: name  ^greeting , '', '' , name , ''!'''
+true</code></pre>
+      <p>Two methods, two shapes worth noticing:</p>
+      <ul>
+        <li><code>setGreeting: g&nbsp; greeting := g. ^self</code> — pattern
+          (<code>setGreeting: g</code>, meaning this method takes one
+          argument, named <code>g</code>), then a <code>.</code>-separated
+          body. <code>greeting := g</code> stores the argument into the
+          instance variable; instance variables are just visible by name
+          inside a method, no <code>self greeting :=</code> needed.
+          <code>^self</code> returns the receiver — a common pattern for a
+          "setter" method, so you can chain sends onto its result.</li>
+        <li><code>greet: name&nbsp; ^greeting , '', '' , name , ''!'''</code> —
+          builds and returns a new string by concatenating pieces. Note the
+          doubled quotes (<code>''...''</code>) inside the source string,
+          needed because the whole method body is itself written as one
+          quoted string.</li>
+      </ul>
+      <p><code>compile:</code> answers <code>true</code> on success. Now use it:</p>
+      <pre class="term"><code><span class="p">st&gt; </span>g := Greeter new setGreeting: 'Hello'
+a Greeter
+<span class="p">st&gt; </span>g greet: 'World'
+'Hello, World!'</code></pre>
+      <p>
+        <code>Greeter new</code> creates a fresh instance (all instance
+        variables start <code>nil</code>); sending it <code>setGreeting:</code>
+        back-to-back is why <code>setGreeting:</code> returning
+        <code>self</code> mattered — it let the whole line read as one
+        chained expression instead of two statements.
+      </p>
+
+      <h2 id="counter">9. State that changes: a Counter</h2>
+      <p>
+        A more typical stateful object — one whose instance variable
+        actually changes over the object's lifetime:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>Object subclass: #Counter instanceVariableNames: 'count'
+Counter
+<span class="p">st&gt; </span>Counter compile: 'initialize  count := 0. ^self'
+true
+<span class="p">st&gt; </span>Counter compile: 'count  ^count'
+true
+<span class="p">st&gt; </span>Counter compile: 'increment  count := count + 1. ^self'
+true</code></pre>
+      <p>
+        Three methods: <code>initialize</code> sets the starting state,
+        <code>count</code> is a getter, <code>increment</code> mutates and
+        (again) returns <code>self</code> for chaining. One thing to watch
+        for — <strong><code>new</code> does <em>not</em> automatically call
+        <code>initialize</code></strong> here (unlike some modern Smalltalk
+        dialects), so you must call it yourself:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>c := Counter new initialize
+a Counter
+<span class="p">st&gt; </span>c increment
+a Counter
+<span class="p">st&gt; </span>c count
+1</code></pre>
+      <p>
+        Because <code>increment</code> returns <code>self</code>, you can
+        chain several in a row with a <strong>cascade</strong> —
+        <code>;</code> resends further messages to the <em>same
+        receiver</em> as the message before the first <code>;</code>:
+      </p>
+      <pre class="term"><code><span class="p">st&gt; </span>c increment; increment
+a Counter
+<span class="p">st&gt; </span>c count
+3</code></pre>
+      <p>
+        <code>c increment; increment</code> sends <code>increment</code> to
+        <code>c</code> twice, one after another — not <code>c increment</code>
+        followed by sending <code>increment</code> to whatever the first call
+        returned (which happens to also be <code>c</code> here, but cascades
+        don't rely on that).
+      </p>
+
+      <h2 id="loops">10. Loops</h2>
+      <pre class="term"><code><span class="p">st&gt; </span>n := 1
+1
+<span class="p">st&gt; </span>sum := 0
+0
+<span class="p">st&gt; </span>[n &lt;= 5] whileTrue: [sum := sum + n. n := n + 1]
+nil
+<span class="p">st&gt; </span>sum
+15</code></pre>
+      <p>
+        <code>whileTrue:</code> is sent to a 0-argument block (the
+        condition), with another 0-argument block as its argument (the
+        body); the condition is re-evaluated before every iteration. Notice
+        both the condition and the body are blocks — same mechanism as
+        <code>ifTrue:ifFalse:</code>, just reused for looping instead of
+        branching. There's no dedicated <code>while</code> keyword in the
+        grammar; <code>whileTrue:</code> is just an ordinary message,
+        defined on <code>Block</code>.
+      </p>
+
+      <h2 id="next">11. Where to go from here</h2>
+      <p>
+        You now have the whole shape of the language: everything is a
+        message send, blocks defer evaluation, and classes/methods are
+        built up incrementally via
+        <code>subclass:instanceVariableNames:</code> and
+        <code>compile:</code>. From here:
+      </p>
+      <div class="next-box">
+        <ul style="margin-bottom:0;">
+          <li><strong><a href="https://github.com/hansolovkarlsson/Smalltalk/blob/main/docs/LANGUAGE.md">LANGUAGE.md</a></strong>
+            — the full, precise reference: every selector currently
+            implemented, exact grammar rules, all the sharp edges (no
+            comments, no floats, one-expression-per-line, etc.) called out
+            explicitly under "Known limitations."</li>
+          <li><strong><a href="https://github.com/hansolovkarlsson/Smalltalk/tree/main/examples">examples/</a></strong>
+            — fuller, runnable programs (<code>./bin/smalltalk
+            examples/point.st</code>), including subclassing with
+            <code>super</code> (<code>animals.st</code>), closures
+            (<code>blocks.st</code>), and non-local return.</li>
+          <li><strong><a href="https://github.com/hansolovkarlsson/Smalltalk/blob/main/docs/ROADMAP.md">ROADMAP.md</a></strong>
+            — how the interpreter itself is built, milestone by milestone,
+            plus what's planned next.</li>
+        </ul>
+      </div>
+      <p style="margin-top:1.6rem;">
+        The single biggest habit to build early: when something doesn't
+        work the way you expect, ask "what message is this, and what is it
+        being sent to?" — there's no other kind of operation in this
+        language.
+      </p>
+
+    </div>
+  </div>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <span>Hans Karlsson</span>
+    <a href="https://github.com/hansolovkarlsson/Smalltalk">github.com/hansolovkarlsson/Smalltalk</a>
+  </div>
+</footer>
+
+</body>
+</html>

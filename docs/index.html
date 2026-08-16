@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smalltalk — a VM built from scratch in C</title>
+<meta name="description" content="A from-scratch Smalltalk interpreter and bytecode VM, written incrementally in C: message dispatch, closures, classes, and mark-sweep garbage collection.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="mark">st&gt;</span> Smalltalk</a>
+    <nav class="site">
+      <a href="index.html" class="current">Home</a>
+      <a href="tutorial.html">Tutorial</a>
+      <a href="https://github.com/hansolovkarlsson/Smalltalk/blob/main/docs/LANGUAGE.md">Language reference</a>
+      <a href="https://github.com/hansolovkarlsson/Smalltalk/tree/main/examples">Examples</a>
+      <a href="https://github.com/hansolovkarlsson/Smalltalk">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <h1>A Smalltalk, built from scratch in C.</h1>
+  <p class="lead">
+    An object-oriented, message-passing language and virtual machine,
+    grown one milestone at a time: a tagged object model, real method
+    dispatch, user-defined classes, closures with non-local return, a
+    mark-sweep garbage collector, and finally a bytecode compiler with
+    its own dispatch loop — no framework, no bison/flex, no borrowed VM.
+  </p>
+  <div class="cta-row">
+    <a class="btn primary" href="tutorial.html">Start the tutorial</a>
+    <a class="btn ghost" href="https://github.com/hansolovkarlsson/Smalltalk">View source on GitHub</a>
+  </div>
+</div>
+
+<main class="page">
+
+  <section class="block">
+    <h2>Everything is a message send</h2>
+    <pre class="term"><code><span class="p">st&gt; </span>3 + 4
+7
+<span class="p">st&gt; </span>2 + 3 * 4               <span class="c">"no operator precedence — strictly left to right"</span>
+20
+<span class="p">st&gt; </span>Object subclass: #Counter instanceVariableNames: 'count'
+Counter
+<span class="p">st&gt; </span>Counter compile: 'increment  count := count + 1. ^self'
+true
+<span class="p">st&gt; </span>[:a :b | a * b] value: 6 value: 7
+42</code></pre>
+    <p>
+      There's no special operator syntax anywhere in the language — <code>+</code>,
+      <code>ifTrue:ifFalse:</code>, and a method you define yourself are all
+      handled by exactly the same mechanism: a message sent to a receiver,
+      resolved by walking a class's superclass chain. Once that clicks, the
+      rest of the language falls out of it.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>What's inside</h2>
+    <div class="card-grid">
+      <div class="card">
+        <h3>Tagged object model</h3>
+        <p>SmallIntegers packed directly into a pointer-sized <code>oop</code>,
+        no heap allocation; everything else a real heap object sharing a
+        common <code>isa</code> layout.</p>
+      </div>
+      <div class="card">
+        <h3>Real message dispatch</h3>
+        <p>No hardcoded operators. Every send — arithmetic included — walks
+        the superclass chain looking up a primitive or a compiled method.</p>
+      </div>
+      <div class="card">
+        <h3>User-defined classes</h3>
+        <p><code>subclass:instanceVariableNames:</code> and
+        <code>compile:</code> let the language grow itself from inside the
+        REPL — instance variables, <code>self</code>/<code>super</code>,
+        inheritance.</p>
+      </div>
+      <div class="card">
+        <h3>Closures &amp; non-local return</h3>
+        <p>Block literals capture their enclosing activation; <code>^</code>
+        unwinds via <code>longjmp</code> back to the lexically enclosing
+        method, however deep the block nesting.</p>
+      </div>
+      <div class="card">
+        <h3>Mark-sweep garbage collection</h3>
+        <p>Precise heap tracing plus a conservative, exact-match scan of the
+        C stack — no shadow stack, no Boehm-style false positives.</p>
+      </div>
+      <div class="card">
+        <h3>Bytecode compiler + VM</h3>
+        <p>Method and block bodies compile once to a flat instruction
+        sequence and run on a dispatch loop, instead of re-walking an AST
+        on every call.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Built incrementally, milestone by milestone</h2>
+    <ol class="milestone-list">
+      <li><span class="num done">01</span> Core object model, message dispatch, REPL</li>
+      <li><span class="num done">02</span> Variables, String/Symbol, printString, cascades</li>
+      <li><span class="num done">03</span> Class-definition syntax + user-defined methods</li>
+      <li><span class="num done">04</span> Block literals, real closures, non-local return, control flow</li>
+      <li><span class="num done">05</span> Mark-sweep garbage collection</li>
+      <li><span class="num done">06</span> Bytecode compiler + VM dispatch loop</li>
+    </ol>
+    <p style="margin-top:1.2rem;">
+      See the <a href="https://github.com/hansolovkarlsson/Smalltalk/blob/main/docs/ROADMAP.md">full roadmap</a>
+      for what each milestone actually changed, with try-it-yourself REPL
+      sessions, plus what's being considered next.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Try it locally</h2>
+    <pre class="term"><code><span class="p">$ </span>git clone https://github.com/hansolovkarlsson/Smalltalk.git
+<span class="p">$ </span>cd Smalltalk
+<span class="p">$ </span>make
+<span class="p">$ </span>./bin/smalltalk
+Smalltalk REPL (milestone 6). Type an expression, or 'quit' to exit.
+<span class="p">st&gt; </span>3 + 4 factorial</code></pre>
+    <p>
+      <code>make test</code> runs the assert-based regression suite;
+      <code>make examples</code> runs every runnable program under
+      <code>examples/</code>. The
+      <a href="tutorial.html">tutorial</a> walks through the language itself
+      from a blank REPL.
+    </p>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <span>Hans Karlsson</span>
+    <a href="https://github.com/hansolovkarlsson/Smalltalk">github.com/hansolovkarlsson/Smalltalk</a>
+  </div>
+</footer>
+
+</body>
+</html>
