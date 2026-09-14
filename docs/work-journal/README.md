@@ -17,3 +17,4 @@ those, it belongs there and not here.
 
 | Day | |
 |---|---|
+| [2026-09-14](2026-09-14.md) | The records arrive: setup in ensure mode, the roadmap kept as one ledger, three files seeded |
