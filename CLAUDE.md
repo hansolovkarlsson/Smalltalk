@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Start here
+
+`scratch/daily-standup.md` — written at the end of the previous working day to
+be read at the start of the next: where the tree was left, what went in, and
+what is outstanding. `scratch/` is gitignored and is not part of this
+repository, so the file is absent on a fresh clone and on any day that was not
+closed out. When it is absent, `git log` and the documents named below are the
+way in.
+
 ## What this is
 
 A from-scratch Smalltalk interpreter/VM, written in C, built incrementally.
@@ -549,3 +558,15 @@ example REPL sessions to try for each completed milestone. Narrative
 documentation lives under `docs/` (`docs/ROADMAP.md`, `docs/LANGUAGE.md`);
 this file (`CLAUDE.md`) stays at the repo root since Claude Code only
 auto-loads it from there.
+
+## The records
+
+`docs/ROADMAP.md` is one ledger with both halves: what was built, as the
+✅ milestones with their commits, and what is left, under "Beyond the
+original roadmap". `docs/POSTMORTEM.md` scores a mistake or a prediction
+once it has met evidence. `docs/CHANGELOG.md` says when something visible
+from outside shipped. `docs/work-journal/` is the journal and is a
+directory, one file per working day named `YYYY-MM-DD.md`, with its
+opening note living once in `docs/work-journal/README.md`. Each of those
+opens with a note stating its own job, and that note is the specification
+for what belongs in it: follow it over any general instruction.
